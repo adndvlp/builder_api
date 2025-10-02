@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read: if(request.auth.uid == userId);
+      allow write: if(request.auth.uid == userId) && 
+  request.resource.data.keys().hasOnly(['email', 'experiments', 'osfToken', 'osfTokenValid', 'driveToken', 'driveTokenValid', 'dropboxToken', 'dropboxTokenValid', 'uid']) &&
+        (request.resource.data.uid == userId);
+    }
+    match /experiments/{experimentId} {
+      function verifyFields(){
+        return request.resource.data.keys().hasOnly(['active', 'activeBase64', 'activeConditionAssignment', 'id', 'osfRepo', 'osfComponent', 'osfFilesLink', 'owner', 'title', 'sessions', 'nConditions', 'currentCondition', 'useValidation', 'allowJSON', 'allowCSV', 'requiredFields', 'maxSessions', 'limitSessions'])
+      }
+      allow read: if(request.auth.uid != null) &&
+        resource.data.owner == request.auth.uid;
+      allow create: if(request.auth.uid != null) &&
+       verifyFields() &&
+        request.resource.data.owner == request.auth.uid;
+      allow update: if(request.auth.uid == resource.data.owner) &&
+       verifyFields();
+      allow delete: if(request.auth.uid == resource.data.owner);
+    }
+  }
+}

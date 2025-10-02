@@ -1,0 +1,13 @@
+### Setup de Firebase CLI y Emuladores
+
+1. Instalar Firebase CLI:
+	npm install -g firebase-tools
+
+2. Login en Firebase CLI:
+	firebase login
+
+3. Habilitar experimento webframeworks:
+	firebase experiments:enable webframeworks
+
+4. Iniciar emuladores de Auth y Firestore:
+	firebase emulators:start --only auth,firestore
