@@ -15,8 +15,9 @@ import {
   AlertDialogOverlay,
 } from "@chakra-ui/react";
 
-import { auth } from "../../lib/firebase";
+import { auth, db } from "../../lib/firebase";
 import { deleteUser } from "firebase/auth";
+import { doc, deleteDoc } from "firebase/firestore";
 
 import { useRef } from "react";
 
@@ -31,6 +32,10 @@ export default function DeleteAccount({ setDeleting }) {
 
   const deleteAccount = async function () {
     try {
+      // Borrar datos del usuario en Firestore
+      const userDoc = doc(db, "users", user.uid);
+      await deleteDoc(userDoc);
+      // Borrar usuario de Firebase Auth
       await deleteUser(auth.currentUser);
       router.push("/admin/deleted-account");
     } catch (error) {

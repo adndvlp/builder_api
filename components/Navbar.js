@@ -1,5 +1,5 @@
 import NextLink from "next/link";
-import { useContext } from "react";
+import { useContext, useEffect, useState } from "react";
 import { UserContext } from "../lib/context";
 import {
   Box,
@@ -26,6 +26,12 @@ const rubik = Rubik({ subsets: ["latin"] });
 
 export default function Navbar() {
   const { user } = useContext(UserContext);
+  const [mounted, setMounted] = useState(false);
+
+  // Evitar errores de hidratación
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   return (
     <Box as="nav" flexShrink={0}>
@@ -71,7 +77,7 @@ export default function Navbar() {
             <Link color="white" as={NextLink} href="/faq">
               FAQ
             </Link>
-            {user && (
+            {mounted && user && (
               <Link color="white" as={NextLink} href="/admin">
                 My Experiments
               </Link>
@@ -79,7 +85,7 @@ export default function Navbar() {
           </HStack>
         </HStack>
         <HStack display={{ base: "none", md: "flex" }} spacing={8}>
-          {!user && (
+          {mounted && !user && (
             <>
               <NextLink href="/signin">
                 <Button
@@ -98,7 +104,7 @@ export default function Navbar() {
               </NextLink>
             </>
           )}
-          {user && (
+          {mounted && user && (
             <>
               <NextLink href="/admin/new">
                 <Button
@@ -160,7 +166,7 @@ export default function Navbar() {
                 <NextLink href="/admin/new">New Experiment</NextLink>
               </MenuItem>
               <MenuDivider />
-              {!user && (
+              {mounted && !user && (
                 <>
                   <MenuItem bg="greyBackground">
                     <NextLink href="/signup">Sign Up</NextLink>
@@ -170,7 +176,7 @@ export default function Navbar() {
                   </MenuItem>
                 </>
               )}
-              {user && (
+              {mounted && user && (
                 <MenuItem bg="greyBackground" onClick={() => auth.signOut()}>
                   Sign Out
                 </MenuItem>
