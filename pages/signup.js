@@ -54,10 +54,8 @@ export default function SignUpPage() {
         uid: user.uid,
         osfToken: "",
         osfTokenValid: false,
-        driveToken: "",
         dropboxTokens: null,
         githubTokens: null,
-        driveTokenValid: false,
         experiments: [],
       });
 
