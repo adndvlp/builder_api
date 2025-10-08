@@ -56,6 +56,7 @@ export default function SignUpPage() {
         osfTokenValid: false,
         driveToken: "",
         dropboxTokens: null,
+        githubTokens: null,
         driveTokenValid: false,
         experiments: [],
       });

@@ -2,6 +2,7 @@ import { apiData } from "./api-data.js";
 import { apiCondition } from "./api-condition.js";
 import { apiBase64 } from "./api-base64.js";
 import { dropboxOAuthCallback } from "./api-dropbox.js";
+import { githubOAuthCallback } from "./api-github.js";
 import { setGlobalOptions } from "firebase-functions/v2";
 
 setGlobalOptions({
@@ -13,4 +14,5 @@ export {
   apiCondition as apicondition,
   apiBase64 as apibase64,
   dropboxOAuthCallback,
+  githubOAuthCallback,
 };

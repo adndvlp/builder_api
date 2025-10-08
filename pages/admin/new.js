@@ -8,6 +8,7 @@ import { useDocumentData } from "react-firebase-hooks/firestore";
 import Link from "next/link";
 import Router from "next/router";
 import DropboxToken from "../../components/account/DropboxToken";
+import GithubToken from "../../components/account/GithubToken";
 import {
   Button,
   Stack,
@@ -48,7 +49,7 @@ function NewExperimentForm() {
   return (
     <>
       {loading && <Spinner color="green.500" size={"xl"} />}
-      {data && data.dropboxTokens && (
+      {data && data.dropboxTokens && data.githubTokens && (
         <Stack spacing={6} maxWidth="540px">
           <Heading>Create a New Experiment</Heading>
           <FormControl id="title" isInvalid={titleError}>
@@ -100,14 +101,27 @@ function NewExperimentForm() {
           </Button>
         </Stack>
       )}
-      {data && !data.dropboxTokens && (
-        <VStack>
-          <Heading as="h2">Connect your Dropbox Account</Heading>
+      {data && (!data.dropboxTokens || !data.githubTokens) && (
+        <VStack spacing={6} maxWidth="540px">
+          <Heading as="h2">Connect Your Accounts</Heading>
           <Text>
-            Before you can create an experiment, you need to connect your
-            Dropbox account.
+            Before you can create an experiment, you need to connect both your
+            Dropbox and GitHub accounts.
           </Text>
-          <DropboxToken />
+          <VStack spacing={4} w="100%">
+            {!data.dropboxTokens && (
+              <VStack w="100%" spacing={2}>
+                <Text fontWeight="bold">Dropbox (Required)</Text>
+                <DropboxToken />
+              </VStack>
+            )}
+            {!data.githubTokens && (
+              <VStack w="100%" spacing={2}>
+                <Text fontWeight="bold">GitHub (Required)</Text>
+                <GithubToken />
+              </VStack>
+            )}
+          </VStack>
         </VStack>
       )}
     </>
