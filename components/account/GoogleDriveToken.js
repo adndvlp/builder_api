@@ -19,7 +19,7 @@ export default function GoogleDriveToken() {
   const RESPONSE_TYPE = "code";
   // Scopes de Google Drive - usar scope completo para crear carpetas
   const SCOPE =
-    "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email";
+    "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.appfolder https://www.googleapis.com/auth/userinfo.email";
 
   const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(
     REDIRECT_URI
