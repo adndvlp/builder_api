@@ -1,18 +1,18 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { FieldValue } from "firebase-admin/firestore";
+import validateJSON from "./validate-json.js";
+import validateCSV from "./validate-csv.js";
+import postFileDropbox, {
+  createSessionDropbox,
+  appendResultDropbox,
+  listSessionsDropbox,
+  downloadSessionDropbox,
+  deleteSessionDropbox,
+} from "./crud-file-dropbox.js";
 import { db } from "./app.js";
 import writeLog from "./write-log.js";
 import MESSAGES from "./api-messages.js";
-import validateCSV from "./validate-csv.js";
-import validateJSON from "./validate-json.js";
-import postFileGoogleDrive, {
-  createSessionGoogleDrive,
-  appendResultGoogleDrive,
-  listSessionsGoogleDrive,
-  downloadSessionGoogleDrive,
-  deleteSessionGoogleDrive,
-} from "./crud-file-google-drive.js";
-import getValidGoogleDriveToken from "./refresh-google-drive-token.js";
+import getValidDropboxToken from "./refresh-dropbox-token.js";
 
 export const apiData = onRequest({ cors: true }, async (req, res) => {
   const { experimentID, sessionId, data, filename, action } = req.body;
@@ -64,7 +64,7 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
 
   if (exp_data.limitSessions) {
     if (exp_data.sessions >= exp_data.maxSessions) {
-      res.status(400).json(MESSAGES.MAX_SESSIONS_REACHED);
+      res.status(400).json(MESSAGES.SESSION_LIMIT_REACHED);
       return;
     }
   }
@@ -72,10 +72,16 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
   if (exp_data.useValidation) {
     let valid = false;
     if (exp_data.allowJSON) {
-      valid = validateJSON(data, exp_data.requiredFields);
+      const validJSON = validateJSON(data, exp_data.requiredFields);
+      if (validJSON) {
+        valid = true;
+      }
     }
     if (exp_data.allowCSV && !valid) {
-      valid = validateCSV(data, exp_data.requiredFields);
+      const validCSV = validateCSV(data, exp_data.requiredFields);
+      if (validCSV) {
+        valid = true;
+      }
     }
     if (!valid) {
       res.status(400).json(MESSAGES.INVALID_DATA);
@@ -83,27 +89,27 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
     }
   }
 
-  // Obtener token válido de Google Drive (refresca automáticamente si es necesario)
-  const tokenResult = await getValidGoogleDriveToken(exp_data.owner);
+  // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
+  const tokenResult = await getValidDropboxToken(exp_data.owner);
 
   if (!tokenResult.success) {
-    res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
+    res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
     return;
   }
 
-  const result = await postFileGoogleDrive(
-    exp_data.driveFolderId,
+  const result = await postFileDropbox(
+    exp_data.dropboxFolder,
     tokenResult.access_token,
     data,
     filename
   );
 
   if (!result.success) {
-    if (result.errorCode === 409) {
-      res.status(409).json(MESSAGES.FILE_ALREADY_EXISTS);
+    if (result.errorCode === 409 && result.errorText === "Conflict") {
+      res.status(400).json(MESSAGES.DROPBOX_FILE_EXISTS);
       return;
     }
-    res.status(400).json(MESSAGES.GOOGLE_DRIVE_UPLOAD_ERROR);
+    res.status(400).json(MESSAGES.DROPBOX_UPLOAD_ERROR);
     return;
   }
 
@@ -133,54 +139,55 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
 
     if (exp_data.limitSessions) {
       if (exp_data.sessions >= exp_data.maxSessions) {
-        res.status(400).json(MESSAGES.MAX_SESSIONS_REACHED);
+        res.status(400).json(MESSAGES.SESSION_LIMIT_REACHED);
         return;
       }
     }
 
-    // Obtener token válido de Google Drive (refresca automáticamente si es necesario)
-    const tokenResult = await getValidGoogleDriveToken(exp_data.owner);
+    // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
+    const tokenResult = await getValidDropboxToken(exp_data.owner);
 
     if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
+      res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
       return;
     }
 
-    console.log("Creating session in Google Drive:", {
-      folderId: exp_data.driveFolderId,
+    console.log("Creating session in Dropbox:", {
+      folder: exp_data.dropboxFolder,
       experimentID,
       sessionId,
     });
 
-    // Crear la sesión en Google Drive
-    const result = await createSessionGoogleDrive(
-      exp_data.driveFolderId,
+    // Crear la sesión en Dropbox
+    const result = await createSessionDropbox(
+      exp_data.dropboxFolder,
       tokenResult.access_token,
       experimentID,
       sessionId
     );
 
-    console.log("Google Drive creation result:", result);
+    console.log("Dropbox creation result:", result);
 
     if (!result.success) {
-      if (result.errorCode === 409) {
+      if (result.error === "Session already exists") {
         res.status(409).json({
           success: false,
           message: "Session already exists",
-          errorCode: 409,
         });
         return;
       }
+      console.error("Failed to create session in Dropbox:", result);
       res.status(400).json({
         success: false,
-        message: result.errorText || "Error creating session",
+        message: "Failed to create session",
+        error: result.errorText,
       });
       return;
     }
 
     // Calcular el número de participante listando todas las sesiones
-    const sessionsResult = await listSessionsGoogleDrive(
-      exp_data.driveFolderId,
+    const sessionsResult = await listSessionsDropbox(
+      exp_data.dropboxFolder,
       tokenResult.access_token,
       experimentID
     );
@@ -235,11 +242,11 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
       return;
     }
 
-    // Obtener token válido de Google Drive (refresca automáticamente si es necesario)
-    const tokenResult = await getValidGoogleDriveToken(exp_data.owner);
+    // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
+    const tokenResult = await getValidDropboxToken(exp_data.owner);
 
     if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
+      res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
       return;
     }
 
@@ -251,55 +258,52 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
       } catch (err) {
         res.status(400).json({
           success: false,
-          message: "Invalid JSON in data parameter",
+          message: "Invalid data format",
         });
         return;
       }
     }
 
-    // Validar los datos si está configurado
-    if (exp_data.useValidation) {
-      let valid = false;
-      if (exp_data.allowJSON) {
-        valid = validateJSON(
-          JSON.stringify([parsedData]),
-          exp_data.requiredFields
-        );
-      }
-      if (!valid) {
-        res.status(400).json(MESSAGES.INVALID_DATA);
-        return;
-      }
-    }
-
-    console.log("Appending result to Google Drive:", {
-      folderId: exp_data.driveFolderId,
+    console.log("Appending data to session:", {
       experimentID,
       sessionId,
+      dataKeys: Object.keys(parsedData),
     });
 
-    // Agregar el resultado a la sesión
-    const result = await appendResultGoogleDrive(
-      exp_data.driveFolderId,
+    // Agregar el resultado a la sesión en Dropbox
+    const result = await appendResultDropbox(
+      exp_data.dropboxFolder,
       tokenResult.access_token,
       experimentID,
       sessionId,
       parsedData
     );
 
-    console.log("Google Drive append result:", result);
+    console.log("Append result:", result);
 
     if (!result.success) {
+      if (result.error === "Session not found") {
+        console.error("Session not found:", sessionId);
+        res.status(404).json({
+          success: false,
+          message: "Session not found",
+        });
+        return;
+      }
+      console.error("Failed to append data:", result);
       res.status(400).json({
         success: false,
-        message: result.errorText || "Error appending result",
+        message: "Failed to append data",
+        error: result.errorText,
       });
       return;
     }
 
-    res.status(201).json({
+    console.log("Data appended successfully to session:", sessionId);
+
+    res.status(200).json({
       success: true,
-      message: "Result appended successfully",
+      message: "Data appended successfully",
     });
   } catch (error) {
     console.error("Error in handleAppendResult:", error);
@@ -326,39 +330,44 @@ async function handleListSessions(req, res, experimentID) {
 
     const exp_data = exp_doc.data();
 
-    // Obtener token válido de Google Drive (refresca automáticamente si es necesario)
-    const tokenResult = await getValidGoogleDriveToken(exp_data.owner);
+    // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
+    const tokenResult = await getValidDropboxToken(exp_data.owner);
 
     if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
+      res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
       return;
     }
 
-    console.log("Listing sessions from Google Drive:", {
-      folderId: exp_data.driveFolderId,
+    console.log("Listing sessions from Dropbox:", {
+      folder: exp_data.dropboxFolder,
       experimentID,
     });
 
-    // Listar las sesiones
-    const result = await listSessionsGoogleDrive(
-      exp_data.driveFolderId,
+    // Listar las sesiones desde Dropbox
+    const result = await listSessionsDropbox(
+      exp_data.dropboxFolder,
       tokenResult.access_token,
       experimentID
     );
 
-    console.log("Google Drive list result:", result);
+    console.log("List sessions result:", result);
 
     if (!result.success) {
+      console.error("Failed to list sessions:", result);
       res.status(400).json({
         success: false,
-        message: result.errorText || "Error listing sessions",
+        message: "Failed to list sessions",
+        error: result.errorText,
       });
       return;
     }
 
+    console.log(`Found ${result.sessions.length} sessions`);
+
     res.status(200).json({
       success: true,
       sessions: result.sessions,
+      count: result.sessions.length,
     });
   } catch (error) {
     console.error("Error in handleListSessions:", error);
@@ -385,45 +394,54 @@ async function handleDownloadSession(req, res, experimentID, sessionId) {
 
     const exp_data = exp_doc.data();
 
-    // Obtener token válido de Google Drive (refresca automáticamente si es necesario)
-    const tokenResult = await getValidGoogleDriveToken(exp_data.owner);
+    // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
+    const tokenResult = await getValidDropboxToken(exp_data.owner);
 
     if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
+      res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
       return;
     }
 
-    console.log("Downloading session from Google Drive:", {
-      folderId: exp_data.driveFolderId,
+    console.log("Downloading session from Dropbox:", {
+      folder: exp_data.dropboxFolder,
       experimentID,
       sessionId,
     });
 
-    // Descargar la sesión
-    const result = await downloadSessionGoogleDrive(
-      exp_data.driveFolderId,
+    // Descargar la sesión desde Dropbox
+    const result = await downloadSessionDropbox(
+      exp_data.dropboxFolder,
       tokenResult.access_token,
       experimentID,
       sessionId
     );
 
-    console.log("Google Drive download result:", result);
+    console.log("Download session result:", result);
 
     if (!result.success) {
+      if (result.error === "Session not found") {
+        res.status(404).json({
+          success: false,
+          message: "Session not found",
+        });
+        return;
+      }
+      console.error("Failed to download session:", result);
       res.status(400).json({
         success: false,
-        message: result.errorText || "Error downloading session",
+        message: "Failed to download session",
+        error: result.error,
       });
       return;
     }
 
-    // Enviar el CSV como respuesta
-    res.setHeader("Content-Type", "text/csv");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${experimentID}_${sessionId}.csv"`
-    );
-    res.status(200).send(result.csv);
+    console.log("Session downloaded successfully:", sessionId);
+
+    res.status(200).json({
+      success: true,
+      csv: result.csv,
+      filename: result.filename,
+    });
   } catch (error) {
     console.error("Error in handleDownloadSession:", error);
     res.status(500).json({
@@ -449,43 +467,47 @@ async function handleDeleteSession(req, res, experimentID, sessionId) {
 
     const exp_data = exp_doc.data();
 
-    // Obtener token válido de Google Drive (refresca automáticamente si es necesario)
-    const tokenResult = await getValidGoogleDriveToken(exp_data.owner);
+    // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
+    const tokenResult = await getValidDropboxToken(exp_data.owner);
 
     if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
+      res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
       return;
     }
 
-    console.log("Deleting session from Google Drive:", {
-      folderId: exp_data.driveFolderId,
+    console.log("Deleting session from Dropbox:", {
+      folder: exp_data.dropboxFolder,
       experimentID,
       sessionId,
     });
 
-    // Eliminar la sesión
-    const result = await deleteSessionGoogleDrive(
-      exp_data.driveFolderId,
+    // Eliminar la sesión desde Dropbox
+    const result = await deleteSessionDropbox(
+      exp_data.dropboxFolder,
       tokenResult.access_token,
       experimentID,
       sessionId
     );
 
-    console.log("Google Drive delete result:", result);
+    console.log("Delete session result:", result);
 
     if (!result.success) {
+      console.error("Failed to delete session:", result);
       res.status(400).json({
         success: false,
-        message: result.errorText || "Error deleting session",
+        message: "Failed to delete session",
+        error: result.errorText,
       });
       return;
     }
 
-    // Decrementar el contador de sesiones en Firestore
+    // Decrementar contador de sesiones en Firestore
     await exp_doc_ref.set(
       { sessions: FieldValue.increment(-1) },
       { merge: true }
     );
+
+    console.log("Session deleted successfully:", sessionId);
 
     res.status(200).json({
       success: true,

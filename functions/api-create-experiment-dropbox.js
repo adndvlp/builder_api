@@ -1,9 +1,12 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { FieldValue } from "firebase-admin/firestore";
+import fetch from "node-fetch";
 import { db } from "./app.js";
 import writeLog from "./write-log.js";
-import { createFolderGoogleDrive } from "./crud-file-google-drive.js";
-import getValidGoogleDriveToken from "./refresh-google-drive-token.js";
+import MESSAGES from "./api-messages.js";
+import { getAuth } from "firebase-admin/auth";
+import { createFolderDropbox } from "./crud-file-dropbox.js";
+import getValidDropboxToken from "./refresh-dropbox-token.js";
 
 export const apiCreateExperiment = onRequest(
   { cors: true },
@@ -22,52 +25,41 @@ export const apiCreateExperiment = onRequest(
     await writeLog(experimentID, "createExperiment");
 
     try {
-      // Crear la ruta de la carpeta en Google Drive usando el nombre del experimento
+      // Crear la ruta de la carpeta en Dropbox usando el nombre del experimento
       const folderPath = `/DataPipe/${experimentName}`;
 
-      // Obtener el token de Google Drive del usuario si se proporciona uid
-      let driveFolderCreated = false;
-      let driveFolderId = null;
-      let driveError = null;
+      // Obtener el token de Dropbox del usuario si se proporciona uid
+      let dropboxFolderCreated = false;
+      let dropboxError = null;
 
       if (uid) {
         try {
-          console.log("Getting Google Drive token for user:", uid);
-          // Obtener token válido de Google Drive (refresca automáticamente si es necesario)
-          const tokenResult = await getValidGoogleDriveToken(uid);
-          console.log(
-            "Token result:",
-            tokenResult.success ? "Success" : "Failed",
-            tokenResult.error || ""
-          );
+          // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
+          const tokenResult = await getValidDropboxToken(uid);
 
           if (tokenResult.success) {
-            console.log("Creating folder in Google Drive:", folderPath);
-            // Crear la carpeta en Google Drive
-            const driveResult = await createFolderGoogleDrive(
+            // Crear la carpeta en Dropbox
+            const dropboxResult = await createFolderDropbox(
               tokenResult.access_token,
               folderPath
             );
-            console.log("Drive folder creation result:", driveResult);
 
-            if (driveResult.success) {
-              driveFolderCreated = true;
-              driveFolderId = driveResult.folderId;
-              console.log("Folder created with ID:", driveFolderId);
+            if (dropboxResult.success) {
+              dropboxFolderCreated = true;
             } else {
-              driveError = driveResult.errorText;
-              console.error("Error creating Google Drive folder:", driveError);
+              dropboxError = dropboxResult.errorText;
+              console.error("Error creating Dropbox folder:", dropboxError);
             }
           } else {
-            driveError = `Token error: ${tokenResult.error}`;
+            dropboxError = `Token error: ${tokenResult.error}`;
             console.error(
-              "Error getting valid Google Drive token:",
+              "Error getting valid Dropbox token:",
               tokenResult.error
             );
           }
         } catch (error) {
           console.error("Error accessing user data or creating folder:", error);
-          driveError = error.message;
+          dropboxError = error.message;
         }
       }
 
@@ -75,9 +67,7 @@ export const apiCreateExperiment = onRequest(
       const experimentRef = db.collection("experiments").doc(experimentID);
       await experimentRef.set({
         title: experimentName,
-        driveFolderPath: folderPath,
-        driveFolderId: driveFolderId, // Guardar el ID de la carpeta de Google Drive
-        storageProvider: "googledrive", // Indicar que usa Google Drive
+        dropboxFolder: folderPath,
         active: true, // Activo por defecto para permitir colección de datos
         activeBase64: false,
         activeConditionAssignment: false,
@@ -99,10 +89,9 @@ export const apiCreateExperiment = onRequest(
         success: true,
         message: "Experiment created successfully",
         experimentID: experimentID,
-        driveFolderPath: folderPath,
-        driveFolderId: driveFolderId,
-        driveFolderCreated: driveFolderCreated,
-        ...(driveError && { driveError }),
+        dropboxFolder: folderPath,
+        dropboxFolderCreated: dropboxFolderCreated,
+        ...(dropboxError && { dropboxError }),
       });
     } catch (error) {
       console.error("Error creating experiment:", error);

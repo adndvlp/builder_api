@@ -31,6 +31,10 @@ const MESSAGES = {
     error: "INVALID_DROPBOX_TOKEN",
     message: "The Dropbox token for this experiment is not valid",
   },
+  INVALID_GOOGLE_DRIVE_TOKEN: {
+    error: "INVALID_GOOGLE_DRIVE_TOKEN",
+    message: "The Google Drive token for this experiment is not valid",
+  },
   INVALID_BASE64_DATA: {
     error: "INVALID_BASE64_DATA",
     message: "The data are not valid base64 data",
@@ -64,6 +68,23 @@ const MESSAGES = {
   DROPBOX_UPLOAD_ERROR: {
     error: "DROPBOX_UPLOAD_ERROR",
     message: "An error occurred while uploading the data to Dropbox",
+  },
+  GOOGLE_DRIVE_FILE_EXISTS: {
+    error: "GOOGLE_DRIVE_FILE_EXISTS",
+    message: "The Google Drive file already exists. File names must be unique.",
+  },
+  GOOGLE_DRIVE_UPLOAD_ERROR: {
+    error: "GOOGLE_DRIVE_UPLOAD_ERROR",
+    message: "An error occurred while uploading the data to Google Drive",
+  },
+  FILE_ALREADY_EXISTS: {
+    error: "FILE_ALREADY_EXISTS",
+    message: "The file already exists. File names must be unique.",
+  },
+  MAX_SESSIONS_REACHED: {
+    error: "MAX_SESSIONS_REACHED",
+    message:
+      "The maximum number of sessions for this experiment has been reached",
   },
   SUCCESS: {
     message: "Success",

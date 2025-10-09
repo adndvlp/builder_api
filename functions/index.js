@@ -5,6 +5,7 @@ import { apiCreateExperiment } from "./api-create-experiment.js";
 import { apiDeleteExperiment } from "./api-delete-experiment.js";
 import { dropboxOAuthCallback } from "./api-dropbox.js";
 import { githubOAuthCallback } from "./api-github.js";
+import { googleDriveOAuthCallback } from "./api-google-drive.js";
 import { setGlobalOptions } from "firebase-functions/v2";
 
 setGlobalOptions({
@@ -19,4 +20,5 @@ export {
   apiDeleteExperiment as apideleteexperiment,
   dropboxOAuthCallback,
   githubOAuthCallback,
+  googleDriveOAuthCallback,
 };

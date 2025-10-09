@@ -1,8 +1,8 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { db } from "./app.js";
 import writeLog from "./write-log.js";
-import { deleteFolderGoogleDrive } from "./crud-file-google-drive.js";
-import getValidGoogleDriveToken from "./refresh-google-drive-token.js";
+import { deleteFolderDropbox } from "./crud-file-dropbox.js";
+import getValidDropboxToken from "./refresh-dropbox-token.js";
 
 export const apiDeleteExperiment = onRequest(
   { cors: true },
@@ -34,41 +34,40 @@ export const apiDeleteExperiment = onRequest(
       }
 
       const experimentData = experimentDoc.data();
-      const folderPath = experimentData.driveFolderPath;
-      const folderId = experimentData.driveFolderId;
+      const folderPath = experimentData.dropboxFolder;
 
-      // Intentar eliminar la carpeta de Google Drive si se proporciona uid
-      let driveFolderDeleted = false;
-      let driveError = null;
+      // Intentar eliminar la carpeta de Dropbox si se proporciona uid
+      let dropboxFolderDeleted = false;
+      let dropboxError = null;
 
       if (uid && folderPath) {
         try {
-          // Obtener token válido de Google Drive (refresca automáticamente si es necesario)
-          const tokenResult = await getValidGoogleDriveToken(uid);
+          // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
+          const tokenResult = await getValidDropboxToken(uid);
 
           if (tokenResult.success) {
-            // Eliminar la carpeta en Google Drive (esto eliminará todo el contenido)
-            const driveResult = await deleteFolderGoogleDrive(
+            // Eliminar la carpeta en Dropbox (esto eliminará todo el contenido)
+            const dropboxResult = await deleteFolderDropbox(
               tokenResult.access_token,
               folderPath
             );
 
-            if (driveResult.success) {
-              driveFolderDeleted = true;
+            if (dropboxResult.success) {
+              dropboxFolderDeleted = true;
             } else {
-              driveError = driveResult.errorText;
-              console.error("Error deleting Google Drive folder:", driveError);
+              dropboxError = dropboxResult.errorText;
+              console.error("Error deleting Dropbox folder:", dropboxError);
             }
           } else {
-            driveError = `Token error: ${tokenResult.error}`;
+            dropboxError = `Token error: ${tokenResult.error}`;
             console.error(
-              "Error getting valid Google Drive token:",
+              "Error getting valid Dropbox token:",
               tokenResult.error
             );
           }
         } catch (error) {
           console.error("Error accessing user data or deleting folder:", error);
-          driveError = error.message;
+          dropboxError = error.message;
         }
       }
 
@@ -79,8 +78,8 @@ export const apiDeleteExperiment = onRequest(
         success: true,
         message: "Experiment deleted successfully",
         experimentID: experimentID,
-        driveFolderDeleted: driveFolderDeleted,
-        ...(driveError && { driveWarning: driveError }),
+        dropboxFolderDeleted: dropboxFolderDeleted,
+        ...(dropboxError && { dropboxWarning: dropboxError }),
       });
     } catch (error) {
       console.error("Error deleting experiment:", error);
