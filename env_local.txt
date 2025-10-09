@@ -1,0 +1,1 @@
+NEXT_PUBLIC_FIREBASE_CONFIG='{"apiKey":"AIzaSyBEbJ-uGKzsaf2u24KPamBPVZrUmvhFk-Q","authDomain":"test-e4cf9.firebaseapp.com","projectId":"test-e4cf9","storageBucket":"test-e4cf9.firebasestorage.app","messagingSenderId":"414213417080","appId":"1:414213417080:web:98607c621a54d07656e58d"}'
