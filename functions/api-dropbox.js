@@ -68,16 +68,34 @@ export const dropboxOAuthCallback = onRequest(async (req, res) => {
       throw new Error(tokens.error_description || "No access token returned");
     }
 
-    // Guarda los tokens en Firestore bajo el usuario
-    console.log("Saving tokens to Firestore for user:", uid);
-    await db.collection("users").doc(uid).set(
-      {
-        dropboxTokens: tokens,
-      },
-      { merge: true }
-    );
+    // Calcular expires_at (tiempo de expiración en milisegundos)
+    const now = Date.now();
+    const expires_at = tokens.expires_in
+      ? now + tokens.expires_in * 1000
+      : now + 14400 * 1000; // Default: 4 horas
 
-    console.log("Dropbox tokens saved successfully!");
+    // Guarda los tokens en Firestore bajo el usuario con expires_at
+    console.log("Saving tokens to Firestore for user:", uid);
+    await db
+      .collection("users")
+      .doc(uid)
+      .set(
+        {
+          dropboxTokens: {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            token_type: tokens.token_type,
+            expires_in: tokens.expires_in,
+            expires_at: expires_at,
+            scope: tokens.scope,
+            uid: tokens.uid,
+            account_id: tokens.account_id,
+          },
+        },
+        { merge: true }
+      );
+
+    console.log("Dropbox tokens saved successfully with expiration!");
     return res.status(200).send("Dropbox tokens saved!");
   } catch (error) {
     console.error("Error in dropboxOAuthCallback:", error);

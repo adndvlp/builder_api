@@ -50,16 +50,6 @@ export default function AdminPage({}) {
           direction={["column", "row"]}
         >
           <Heading>Your Experiments</Heading>
-          <Link href="/admin/new">
-            <Button
-              variant={"solid"}
-              colorScheme={"brandTeal"}
-              size={"md"}
-              mr={4}
-            >
-              Create New Experiment
-            </Button>
-          </Link>
         </Stack>
         <ExperimentList />
       </VStack>

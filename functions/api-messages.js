@@ -27,6 +27,10 @@ const MESSAGES = {
     error: "INVALID_OSF_TOKEN",
     message: "The OSF token for this experiment is not valid",
   },
+  INVALID_DROPBOX_TOKEN: {
+    error: "INVALID_DROPBOX_TOKEN",
+    message: "The Dropbox token for this experiment is not valid",
+  },
   INVALID_BASE64_DATA: {
     error: "INVALID_BASE64_DATA",
     message: "The data are not valid base64 data",
@@ -52,6 +56,14 @@ const MESSAGES = {
   OSF_UPLOAD_ERROR: {
     error: "OSF_UPLOAD_ERROR",
     message: "An error occurred while uploading the data to OSF",
+  },
+  DROPBOX_FILE_EXISTS: {
+    error: "DROPBOX_FILE_EXISTS",
+    message: "The Dropbox file already exists. File names must be unique.",
+  },
+  DROPBOX_UPLOAD_ERROR: {
+    error: "DROPBOX_UPLOAD_ERROR",
+    message: "An error occurred while uploading the data to Dropbox",
   },
   SUCCESS: {
     message: "Success",
