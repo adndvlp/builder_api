@@ -57,13 +57,29 @@ export async function createSessionDropbox(
     }
   );
 
-  const result = await uploadResult.json();
-
   if (uploadResult.status !== 200) {
+    let errorText = uploadResult.statusText;
+    try {
+      const result = await uploadResult.json();
+      errorText = result.error_summary || uploadResult.statusText;
+    } catch (err) {
+      // Si no se puede parsear el JSON, usar el statusText
+    }
     return {
       success: false,
       errorCode: uploadResult.status,
-      errorText: result.error_summary || uploadResult.statusText,
+      errorText: errorText,
+    };
+  }
+
+  let result;
+  try {
+    result = await uploadResult.json();
+  } catch (err) {
+    return {
+      success: false,
+      error: "Failed to parse response from Dropbox",
+      details: err.message,
     };
   }
 
@@ -151,13 +167,29 @@ export async function appendResultDropbox(
     }
   );
 
-  const result = await uploadResult.json();
-
   if (uploadResult.status !== 200) {
+    let errorText = uploadResult.statusText;
+    try {
+      const result = await uploadResult.json();
+      errorText = result.error_summary || uploadResult.statusText;
+    } catch (err) {
+      // Si no se puede parsear el JSON, usar el statusText
+    }
     return {
       success: false,
       errorCode: uploadResult.status,
-      errorText: result.error_summary || uploadResult.statusText,
+      errorText: errorText,
+    };
+  }
+
+  let result;
+  try {
+    result = await uploadResult.json();
+  } catch (err) {
+    return {
+      success: false,
+      error: "Failed to parse response from Dropbox",
+      details: err.message,
     };
   }
 
@@ -190,16 +222,32 @@ export async function listSessionsDropbox(
   );
 
   if (listResult.status !== 200) {
-    const result = await listResult.json();
+    let errorText = listResult.statusText;
+    try {
+      const result = await listResult.json();
+      errorText = result.error_summary || listResult.statusText;
+    } catch (err) {
+      // Si no se puede parsear el JSON, usar el statusText
+    }
     return {
       success: false,
       errorCode: listResult.status,
-      errorText: result.error_summary || listResult.statusText,
+      errorText: errorText,
       sessions: [],
     };
   }
 
-  const result = await listResult.json();
+  let result;
+  try {
+    result = await listResult.json();
+  } catch (err) {
+    return {
+      success: false,
+      error: "Failed to parse response from Dropbox",
+      details: err.message,
+      sessions: [],
+    };
+  }
 
   // Filtrar archivos que correspondan al experimentID
   const sessions = result.entries
@@ -340,11 +388,17 @@ export async function deleteSessionDropbox(
   );
 
   if (deleteResult.status !== 200) {
-    const result = await deleteResult.json();
+    let errorText = deleteResult.statusText;
+    try {
+      const result = await deleteResult.json();
+      errorText = result.error_summary || deleteResult.statusText;
+    } catch (err) {
+      // Si no se puede parsear el JSON, usar el statusText
+    }
     return {
       success: false,
       errorCode: deleteResult.status,
-      errorText: result.error_summary || deleteResult.statusText,
+      errorText: errorText,
     };
   }
 
@@ -380,15 +434,27 @@ export default async function postFileDropbox(
     }
   );
 
-  const result = await dropboxResult.json();
-
   if (dropboxResult.status !== 200) {
+    let errorText = dropboxResult.statusText;
+    try {
+      const result = await dropboxResult.json();
+      errorText = result.error_summary || dropboxResult.statusText;
+    } catch (err) {
+      // Si no se puede parsear el JSON, usar el statusText
+    }
     return {
       success: false,
       errorCode: dropboxResult.status,
-      errorText: result.error_summary || dropboxResult.statusText,
+      errorText: errorText,
     };
   }
+
+  try {
+    await dropboxResult.json();
+  } catch (err) {
+    // No necesitamos el resultado, solo verificar que sea válido
+  }
+
   return { success: true, errorCode: null, errorText: null };
 }
 
@@ -410,7 +476,15 @@ export async function createFolderDropbox(dropboxToken, folderPath) {
       }
     );
 
-    const result = await createFolderResult.json();
+    let result;
+    try {
+      result = await createFolderResult.json();
+    } catch (err) {
+      return {
+        success: false,
+        errorText: "Failed to parse response from Dropbox",
+      };
+    }
 
     // Si la carpeta ya existe (409), también es un éxito
     if (createFolderResult.status === 200) {
@@ -461,7 +535,15 @@ export async function deleteFolderDropbox(dropboxToken, folderPath) {
       }
     );
 
-    const result = await deleteFolderResult.json();
+    let result;
+    try {
+      result = await deleteFolderResult.json();
+    } catch (err) {
+      return {
+        success: false,
+        errorText: "Failed to parse response from Dropbox",
+      };
+    }
 
     if (deleteFolderResult.status === 200) {
       return {

@@ -1,7 +1,7 @@
 import AuthCheck from "../../components/AuthCheck";
 import { VStack, Heading } from "@chakra-ui/react";
 import ChangePassword from "../../components/account/ChangePassword";
-// import DropboxToken from "../../components/account/DropboxToken";
+import DropboxToken from "../../components/account/DropboxToken";
 import GoogleDriveToken from "../../components/account/GoogleDriveToken";
 import GithubToken from "../../components/account/GithubToken";
 import DeleteAccount from "../../components/account/DeleteAccount";
@@ -15,7 +15,7 @@ export default function AccountPage({}) {
       <VStack spacing={8} w="560px">
         <Heading>Account Settings</Heading>
         <ChangePassword />
-        {/* <DropboxToken /> */}
+        <DropboxToken />
         <GoogleDriveToken />
         <GithubToken />
         <DeleteAccount setDeleting={setDeleting} />
