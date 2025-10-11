@@ -58,7 +58,7 @@ async function getGithubToken(uid) {
 // Configura tus credenciales de GitHub
 const CLIENT_ID = "Ov23limim0vbyTd5J4fK";
 const CLIENT_SECRET = "cdd3ae03ca594a2c16d8668b7698e816d8faebb0";
-const REDIRECT_URI = "http://localhost:3000/github-callback"; // Debe coincidir con el de GitHub Console
+const REDIRECT_URI = "http://localhost:5173/github-callback"; // Debe coincidir con el de GitHub Console
 // const REDIRECT_URI = "https://test-e4cf9.firebaseapp.com/github-callback"; // Para producción
 
 // Endpoint para el callback de OAuth
@@ -127,12 +127,28 @@ export const githubOAuthCallback = onRequest(async (req, res) => {
     );
 
     console.log("GitHub tokens saved successfully!");
-    return res.status(200).send("GitHub tokens saved!");
+
+    // Redirigir de vuelta a la app con mensaje de éxito
+    const redirectUrl =
+      process.env.NODE_ENV === "production"
+        ? "https://test-e4cf9.firebaseapp.com/settings?status=success&service=github"
+        : "http://localhost:5173/settings?status=success&service=github";
+
+    return res.redirect(redirectUrl);
   } catch (error) {
     console.error("Error in githubOAuthCallback:", error);
-    return res
-      .status(500)
-      .send(`Error exchanging code for tokens: ${error.message}`);
+
+    // Redirigir de vuelta a la app con mensaje de error
+    const redirectUrl =
+      process.env.NODE_ENV === "production"
+        ? `https://test-e4cf9.firebaseapp.com/settings?status=error&service=github&message=${encodeURIComponent(
+            error.message
+          )}`
+        : `http://localhost:5173/settings?status=error&service=github&message=${encodeURIComponent(
+            error.message
+          )}`;
+
+    return res.redirect(redirectUrl);
   }
 });
 

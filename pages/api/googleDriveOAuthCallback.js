@@ -11,7 +11,7 @@ export default async function handler(req, res) {
     const isDev = process.env.NODE_ENV === "development";
     const cloudFunctionUrl = isDev
       ? `http://127.0.0.1:5001/osf-relay/us-central1/googleDriveOAuthCallback`
-      : `https://us-central1-osf-relay.cloudfunctions.net/googleDriveOAuthCallback`;
+      : `https://us-central1-test-e4cf9.cloudfunctions.net/googleDriveOAuthCallback`;
 
     console.log("Calling Cloud Function:", cloudFunctionUrl);
     console.log("With params - code:", code, "state:", state);

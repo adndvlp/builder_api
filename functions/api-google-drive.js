@@ -13,7 +13,7 @@ const db = getFirestore();
 const CLIENT_ID =
   "414213417080-bgjk8udcblfgrdld33eif0cmtofl7kir.apps.googleusercontent.com";
 const CLIENT_SECRET = "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";
-const REDIRECT_URI = "http://localhost:3000/google-drive-callback"; // Debe coincidir con Google Console
+const REDIRECT_URI = "http://localhost:5173/google-drive-callback"; // Debe coincidir con Google Console
 // const REDIRECT_URI = "https://test-e4cf9.firebaseapp.com/google-drive-callback"; // Producción
 
 // Endpoint para el callback de OAuth de Google Drive
@@ -95,11 +95,27 @@ export const googleDriveOAuthCallback = onRequest(async (req, res) => {
       );
 
     console.log("Google Drive tokens saved successfully with expiration!");
-    return res.status(200).send("Google Drive tokens saved!");
+
+    // Redirigir de vuelta a la app con mensaje de éxito
+    const redirectUrl =
+      process.env.NODE_ENV === "production"
+        ? "https://test-e4cf9.firebaseapp.com/settings?status=success&service=google-drive"
+        : "http://localhost:5173/settings?status=success&service=google-drive";
+
+    return res.redirect(redirectUrl);
   } catch (error) {
     console.error("Error in googleDriveOAuthCallback:", error);
-    return res
-      .status(500)
-      .send(`Error exchanging code for tokens: ${error.message}`);
+
+    // Redirigir de vuelta a la app con mensaje de error
+    const redirectUrl =
+      process.env.NODE_ENV === "production"
+        ? `https://test-e4cf9.firebaseapp.com/settings?status=error&service=google-drive&message=${encodeURIComponent(
+            error.message
+          )}`
+        : `http://localhost:5173/settings?status=error&service=google-drive&message=${encodeURIComponent(
+            error.message
+          )}`;
+
+    return res.redirect(redirectUrl);
   }
 });

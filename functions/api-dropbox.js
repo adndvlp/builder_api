@@ -13,7 +13,7 @@ const db = getFirestore();
 const CLIENT_ID = "pn9j0lbuvbmu3wl";
 const CLIENT_SECRET = "hwbrvahrl8r3ssk";
 // const REDIRECT_URI = "https://test-e4cf9.firebaseapp.com/dropbox-callback"; // Debe coincidir con el de Dropbox Console
-const REDIRECT_URI = "http://localhost:3000/dropbox-callback"; // Debe coincidir con el de Dropbox Console
+const REDIRECT_URI = "http://localhost:5173/dropbox-callback"; // Debe coincidir con el de Dropbox Console
 
 // Endpoint para el callback de OAuth
 export const dropboxOAuthCallback = onRequest(async (req, res) => {
@@ -96,11 +96,27 @@ export const dropboxOAuthCallback = onRequest(async (req, res) => {
       );
 
     console.log("Dropbox tokens saved successfully with expiration!");
-    return res.status(200).send("Dropbox tokens saved!");
+
+    // Redirigir de vuelta a la app con mensaje de éxito
+    const redirectUrl =
+      process.env.NODE_ENV === "production"
+        ? "https://test-e4cf9.firebaseapp.com/settings?status=success&service=dropbox"
+        : "http://localhost:5173/settings?status=success&service=dropbox";
+
+    return res.redirect(redirectUrl);
   } catch (error) {
     console.error("Error in dropboxOAuthCallback:", error);
-    return res
-      .status(500)
-      .send(`Error exchanging code for tokens: ${error.message}`);
+
+    // Redirigir de vuelta a la app con mensaje de error
+    const redirectUrl =
+      process.env.NODE_ENV === "production"
+        ? `https://test-e4cf9.firebaseapp.com/settings?status=error&service=dropbox&message=${encodeURIComponent(
+            error.message
+          )}`
+        : `http://localhost:5173/settings?status=error&service=dropbox&message=${encodeURIComponent(
+            error.message
+          )}`;
+
+    return res.redirect(redirectUrl);
   }
 });
