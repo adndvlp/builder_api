@@ -30,6 +30,10 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
     return await handleDeleteSession(req, res, experimentID, sessionId);
   }
 
+  if (action === "finish" && experimentID && sessionId) {
+    return await handleFinishSession(req, res, experimentID, sessionId);
+  }
+
   // Detectar si es creación de sesión (experimentID, sessionId, sin data ni filename)
   if (experimentID && sessionId && !data) {
     return await handleCreateSession(req, res, experimentID, sessionId);
@@ -216,7 +220,7 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
   }
 }
 
-// Función auxiliar para agregar resultado
+// Función auxiliar para agregar resultado (ahora guarda en Firestore temporalmente)
 async function handleAppendResult(req, res, experimentID, sessionId, data) {
   try {
     await writeLog(experimentID, "appendResult");
@@ -232,14 +236,6 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
     const exp_data = exp_doc.data();
     if (!exp_data.active) {
       res.status(400).json(MESSAGES.DATA_COLLECTION_NOT_ACTIVE);
-      return;
-    }
-
-    // Obtener token válido de Google Drive (refresca automáticamente si es necesario)
-    const tokenResult = await getValidGoogleDriveToken(exp_data.owner);
-
-    if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
       return;
     }
 
@@ -272,37 +268,163 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
       }
     }
 
-    console.log("Appending result to Google Drive:", {
-      folderId: exp_data.driveFolderId,
+    console.log("Appending result to Firestore temporarily:", {
       experimentID,
       sessionId,
     });
 
-    // Agregar el resultado a la sesión
-    const result = await appendResultGoogleDrive(
-      exp_data.driveFolderId,
-      tokenResult.access_token,
+    // Guardar el resultado temporalmente en Firestore
+    const session_ref = db
+      .collection("experiments")
+      .doc(experimentID)
+      .collection("sessions")
+      .doc(sessionId);
+
+    const session_doc = await session_ref.get();
+
+    if (!session_doc.exists) {
+      // Crear la sesión si no existe
+      await session_ref.set({
+        createdAt: FieldValue.serverTimestamp(),
+        results: [parsedData],
+      });
+    } else {
+      // Agregar al array de resultados
+      await session_ref.update({
+        results: FieldValue.arrayUnion(parsedData),
+      });
+    }
+
+    console.log("Result appended to Firestore successfully");
+
+    res.status(201).json({
+      success: true,
+      message: "Result appended successfully to temporary storage",
+    });
+  } catch (error) {
+    console.error("Error in handleAppendResult:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+}
+
+// Función auxiliar para finalizar sesión (enviar a Google Drive y limpiar Firestore)
+async function handleFinishSession(req, res, experimentID, sessionId) {
+  try {
+    await writeLog(experimentID, "finishSession");
+
+    const exp_doc_ref = db.collection("experiments").doc(experimentID);
+    const exp_doc = await exp_doc_ref.get();
+
+    if (!exp_doc.exists) {
+      res.status(400).json(MESSAGES.EXPERIMENT_NOT_FOUND);
+      return;
+    }
+
+    const exp_data = exp_doc.data();
+
+    // Obtener token válido de Google Drive
+    const tokenResult = await getValidGoogleDriveToken(exp_data.owner);
+
+    if (!tokenResult.success) {
+      res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
+      return;
+    }
+
+    console.log("Finishing session - fetching results from Firestore:", {
       experimentID,
       sessionId,
-      parsedData
-    );
+    });
 
-    console.log("Google Drive append result:", result);
+    // Obtener todos los resultados de Firestore
+    const session_ref = db
+      .collection("experiments")
+      .doc(experimentID)
+      .collection("sessions")
+      .doc(sessionId);
 
-    if (!result.success) {
+    const session_doc = await session_ref.get();
+
+    if (!session_doc.exists) {
       res.status(400).json({
         success: false,
-        message: result.errorText || "Error appending result",
+        message: "Session not found in temporary storage",
       });
       return;
     }
 
-    res.status(201).json({
+    const session_data = session_doc.data();
+    const results = session_data.results || [];
+
+    if (results.length === 0) {
+      res.status(400).json({
+        success: false,
+        message: "No results to send to Google Drive",
+      });
+      return;
+    }
+
+    console.log(`Sending ${results.length} results to Google Drive in batch`);
+
+    // Crear la sesión en Google Drive si no existe
+    const createResult = await createSessionGoogleDrive(
+      exp_data.driveFolderId,
+      tokenResult.access_token,
+      experimentID,
+      sessionId
+    );
+
+    // Si la sesión ya existe (409), continuamos de todas formas
+    if (!createResult.success && createResult.errorCode !== 409) {
+      res.status(400).json({
+        success: false,
+        message: createResult.errorText || "Error creating session in Drive",
+      });
+      return;
+    }
+
+    // Enviar todos los resultados a Google Drive
+    let failedCount = 0;
+    for (const result of results) {
+      const appendResult = await appendResultGoogleDrive(
+        exp_data.driveFolderId,
+        tokenResult.access_token,
+        experimentID,
+        sessionId,
+        result
+      );
+
+      if (!appendResult.success) {
+        failedCount++;
+        console.error("Failed to append result:", appendResult.errorText);
+      }
+    }
+
+    if (failedCount > 0) {
+      res.status(400).json({
+        success: false,
+        message: `Failed to send ${failedCount} of ${results.length} results to Google Drive`,
+      });
+      return;
+    }
+
+    console.log("All results sent to Google Drive, cleaning up Firestore");
+
+    // Limpiar los datos temporales de Firestore
+    await session_ref.delete();
+
+    console.log("Session finished and cleaned up successfully");
+
+    res.status(200).json({
       success: true,
-      message: "Result appended successfully",
+      message: "Session finished successfully",
+      resultsSent: results.length,
     });
   } catch (error) {
-    console.error("Error in handleAppendResult:", error);
+    console.error("Error in handleFinishSession:", error);
     res.status(500).json({
       success: false,
       message: "Internal server error",
