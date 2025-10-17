@@ -18,4 +18,4 @@ Para guardar el estado actual de los datos antes de detener el emulador:
 	firebase emulators:export ./emulator-backup
 
 Para iniciar el emulador restaurando los datos guardados:
-	firebase emulators:start --import=./emulator-backup --only functions,auth,firestore
+	firebase emulators:start --import=./emulator-backup --only functions,auth,firestore,database

@@ -229,7 +229,7 @@ export async function deleteFolderGoogleDrive(accessToken, folderPath) {
 }
 
 /**
- * Crea una nueva sesión en Google Drive
+ * Crea una nueva sesión en Google Drive como archivo CSV
  * @param {string} driveFolderId - ID de la carpeta en Google Drive
  * @param {string} driveToken - Token de acceso de Google Drive
  * @param {string} experimentID - ID del experimento
@@ -242,7 +242,7 @@ export async function createSessionGoogleDrive(
   experimentID,
   sessionId
 ) {
-  const fileName = `${experimentID}_${sessionId}.json`;
+  const fileName = `${experimentID}_${sessionId}.csv`;
 
   // Verificar si el archivo ya existe
   const searchQuery = `name='${fileName}' and '${driveFolderId}' in parents and trashed=false`;
@@ -268,17 +268,12 @@ export async function createSessionGoogleDrive(
     };
   }
 
-  // Crear archivo inicial con estructura básica
-  const initialData = {
-    experimentID,
-    sessionId,
-    createdAt: new Date().toISOString(),
-    data: [],
-  };
+  // Crear archivo CSV vacío (sin encabezados porque aún no sabemos las columnas)
+  const initialCSV = "";
 
   const metadata = {
     name: fileName,
-    mimeType: "application/json",
+    mimeType: "text/csv",
     parents: [driveFolderId],
   };
 
@@ -291,8 +286,8 @@ export async function createSessionGoogleDrive(
     "Content-Type: application/json\r\n\r\n" +
     JSON.stringify(metadata) +
     delimiter +
-    "Content-Type: application/json\r\n\r\n" +
-    JSON.stringify(initialData) +
+    "Content-Type: text/csv\r\n\r\n" +
+    initialCSV +
     close_delim;
 
   const uploadResult = await fetch(
@@ -325,12 +320,12 @@ export async function createSessionGoogleDrive(
 }
 
 /**
- * Agrega respuestas a una sesión existente en Google Drive
+ * Agrega una fila CSV a una sesión existente en Google Drive
  * @param {string} driveFolderId - ID de la carpeta en Google Drive
  * @param {string} driveToken - Token de acceso de Google Drive
  * @param {string} experimentID - ID del experimento
  * @param {string} sessionId - ID de la sesión
- * @param {Object} response - Respuesta a agregar
+ * @param {string} csvRow - Fila CSV a agregar (ya viene como string CSV desde api-data.js)
  * @returns {Promise<Object>} - Objeto con el resultado
  */
 export async function appendResultGoogleDrive(
@@ -338,9 +333,9 @@ export async function appendResultGoogleDrive(
   driveToken,
   experimentID,
   sessionId,
-  response
+  csvRow
 ) {
-  const fileName = `${experimentID}_${sessionId}.json`;
+  const fileName = `${experimentID}_${sessionId}.csv`;
 
   // Buscar el archivo
   const searchQuery = `name='${fileName}' and '${driveFolderId}' in parents and trashed=false`;
@@ -368,7 +363,7 @@ export async function appendResultGoogleDrive(
 
   const fileId = searchData.files[0].id;
 
-  // Descargar el archivo existente
+  // Descargar el archivo CSV existente
   const downloadResult = await fetch(
     `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
     {
@@ -387,49 +382,34 @@ export async function appendResultGoogleDrive(
     };
   }
 
-  const fileContent = await downloadResult.text();
-  let sessionData;
+  let existingCSV = await downloadResult.text();
 
-  try {
-    sessionData = JSON.parse(fileContent);
-  } catch (err) {
-    return {
-      success: false,
-      errorText: "Error parsing session data",
-    };
+  // Si el archivo está vacío, la primera línea CSV será el encabezado
+  // Si ya tiene contenido, agregamos una nueva línea
+  let updatedCSV;
+  if (existingCSV.trim() === "") {
+    // Primer registro: csvRow ya incluye el encabezado
+    updatedCSV = csvRow;
+  } else {
+    // Registros subsecuentes: agregar nueva línea
+    updatedCSV = existingCSV + "\n" + csvRow;
   }
 
-  // Parsear response si es string
-  if (typeof response === "string") {
-    try {
-      response = JSON.parse(response);
-    } catch (err) {
-      return {
-        success: false,
-        errorText: "Invalid JSON in response",
-      };
-    }
-  }
-
-  // Agregar la nueva respuesta
-  sessionData.data.push(response);
-
-  // Actualizar el archivo
+  // Actualizar el archivo en Drive
   const uploadResult = await fetch(
     `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
     {
       method: "PATCH",
       headers: {
         Authorization: `Bearer ${driveToken}`,
-        "Content-Type": "application/json",
+        "Content-Type": "text/csv",
       },
-      body: JSON.stringify(sessionData),
+      body: updatedCSV,
     }
   );
 
-  const result = await uploadResult.json();
-
   if (!uploadResult.ok) {
+    const result = await uploadResult.json();
     return {
       success: false,
       errorText: result.error?.message || "Error updating file",
@@ -439,7 +419,7 @@ export async function appendResultGoogleDrive(
 
   return {
     success: true,
-    id: result.id,
+    id: fileId,
     participantNumber: 1,
   };
 }

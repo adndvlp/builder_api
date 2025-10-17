@@ -1,4 +1,4 @@
-import { apiData } from "./api-data.js";
+import { apiData, finalizeDisconnectedSessions } from "./api-data.js";
 import { apiCondition } from "./api-condition.js";
 import { apiBase64 } from "./api-base64.js";
 import { apiCreateExperiment } from "./api-create-experiment.js";
@@ -31,4 +31,5 @@ export {
   githubGetRepository,
   githubUpdateHtml,
   googleDriveOAuthCallback,
+  finalizeDisconnectedSessions,
 };

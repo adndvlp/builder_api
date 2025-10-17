@@ -1,4 +1,5 @@
 import { onRequest } from "firebase-functions/v2/https";
+import { onValueWritten } from "firebase-functions/v2/database";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "./app.js";
 import writeLog from "./write-log.js";
@@ -31,7 +32,36 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
   }
 
   if (action === "finish" && experimentID && sessionId) {
-    return await handleFinishSession(req, res, experimentID, sessionId);
+    try {
+      const result = await finalizeSession(experimentID, sessionId);
+      res.status(200).json(result);
+    } catch (error) {
+      console.error("Error in finish action:", error);
+
+      // Mapear errores a respuestas HTTP apropiadas
+      if (error.message === "EXPERIMENT_NOT_FOUND") {
+        res.status(400).json(MESSAGES.EXPERIMENT_NOT_FOUND);
+      } else if (error.message === "INVALID_GOOGLE_DRIVE_TOKEN") {
+        res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
+      } else if (error.message === "SESSION_NOT_FOUND") {
+        res.status(400).json({
+          success: false,
+          message: "Session not found in temporary storage",
+        });
+      } else if (error.message === "NO_RESULTS") {
+        res.status(400).json({
+          success: false,
+          message: "No results to send to Google Drive",
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+          error: error.message,
+        });
+      }
+    }
+    return;
   }
 
   // Detectar si es creación de sesión (experimentID, sessionId, sin data ni filename)
@@ -221,6 +251,7 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
 }
 
 // Función auxiliar para agregar resultado (ahora guarda en Firestore temporalmente)
+// csv
 async function handleAppendResult(req, res, experimentID, sessionId, data) {
   try {
     await writeLog(experimentID, "appendResult");
@@ -239,7 +270,52 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
       return;
     }
 
-    // Parsear data si viene como string
+    // Si el experimento acepta CSV, validar y guardar el string CSV directamente
+    if (exp_data.allowCSV) {
+      // Validar CSV si está configurado
+      if (exp_data.useValidation) {
+        const valid = validateCSV(data, exp_data.requiredFields);
+        if (!valid) {
+          res.status(400).json(MESSAGES.INVALID_DATA);
+          return;
+        }
+      }
+
+      console.log("Appending CSV result to Firestore temporarily:", {
+        experimentID,
+        sessionId,
+      });
+
+      // Guardar el CSV como string en Firestore
+      const session_ref = db
+        .collection("experiments")
+        .doc(experimentID)
+        .collection("sessions")
+        .doc(sessionId);
+
+      const session_doc = await session_ref.get();
+
+      if (!session_doc.exists) {
+        await session_ref.set({
+          createdAt: FieldValue.serverTimestamp(),
+          results: [data],
+        });
+      } else {
+        await session_ref.update({
+          results: FieldValue.arrayUnion(data),
+        });
+      }
+
+      console.log("CSV result appended to Firestore successfully");
+
+      res.status(201).json({
+        success: true,
+        message: "CSV result appended successfully to temporary storage",
+      });
+      return;
+    }
+
+    // Si no es CSV, intentar parsear como JSON (flujo original)
     let parsedData = data;
     if (typeof data === "string") {
       try {
@@ -268,7 +344,7 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
       }
     }
 
-    console.log("Appending result to Firestore temporarily:", {
+    console.log("Appending JSON result to Firestore temporarily:", {
       experimentID,
       sessionId,
     });
@@ -283,23 +359,21 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
     const session_doc = await session_ref.get();
 
     if (!session_doc.exists) {
-      // Crear la sesión si no existe
       await session_ref.set({
         createdAt: FieldValue.serverTimestamp(),
         results: [parsedData],
       });
     } else {
-      // Agregar al array de resultados
       await session_ref.update({
         results: FieldValue.arrayUnion(parsedData),
       });
     }
 
-    console.log("Result appended to Firestore successfully");
+    console.log("JSON result appended to Firestore successfully");
 
     res.status(201).json({
       success: true,
-      message: "Result appended successfully to temporary storage",
+      message: "JSON result appended successfully to temporary storage",
     });
   } catch (error) {
     console.error("Error in handleAppendResult:", error);
@@ -311,127 +385,184 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
   }
 }
 
-// Función auxiliar para finalizar sesión (enviar a Google Drive y limpiar Firestore)
-async function handleFinishSession(req, res, experimentID, sessionId) {
-  try {
-    await writeLog(experimentID, "finishSession");
+// Función auxiliar INTERNA para finalizar sesión (lógica pura sin req/res)
+// Esta función puede ser llamada desde el endpoint HTTP o desde Cloud Functions
+export async function finalizeSession(experimentID, sessionId) {
+  await writeLog(experimentID, "finishSession");
 
-    const exp_doc_ref = db.collection("experiments").doc(experimentID);
-    const exp_doc = await exp_doc_ref.get();
+  const exp_doc_ref = db.collection("experiments").doc(experimentID);
+  const exp_doc = await exp_doc_ref.get();
 
-    if (!exp_doc.exists) {
-      res.status(400).json(MESSAGES.EXPERIMENT_NOT_FOUND);
-      return;
-    }
+  if (!exp_doc.exists) {
+    throw new Error("EXPERIMENT_NOT_FOUND");
+  }
 
-    const exp_data = exp_doc.data();
+  const exp_data = exp_doc.data();
 
-    // Obtener token válido de Google Drive
-    const tokenResult = await getValidGoogleDriveToken(exp_data.owner);
+  // Obtener token válido de Google Drive
+  const tokenResult = await getValidGoogleDriveToken(exp_data.owner);
 
-    if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
-      return;
-    }
+  if (!tokenResult.success) {
+    throw new Error("INVALID_GOOGLE_DRIVE_TOKEN");
+  }
 
-    console.log("Finishing session - fetching results from Firestore:", {
-      experimentID,
-      sessionId,
-    });
+  console.log("Finishing session - fetching results from Firestore:", {
+    experimentID,
+    sessionId,
+  });
 
-    // Obtener todos los resultados de Firestore
-    const session_ref = db
-      .collection("experiments")
-      .doc(experimentID)
-      .collection("sessions")
-      .doc(sessionId);
+  // Obtener todos los resultados de Firestore
+  const session_ref = db
+    .collection("experiments")
+    .doc(experimentID)
+    .collection("sessions")
+    .doc(sessionId);
 
-    const session_doc = await session_ref.get();
+  const session_doc = await session_ref.get();
 
-    if (!session_doc.exists) {
-      res.status(400).json({
-        success: false,
-        message: "Session not found in temporary storage",
-      });
-      return;
-    }
+  if (!session_doc.exists) {
+    throw new Error("SESSION_NOT_FOUND");
+  }
 
-    const session_data = session_doc.data();
-    const results = session_data.results || [];
+  const session_data = session_doc.data();
+  const results = session_data.results || [];
 
-    if (results.length === 0) {
-      res.status(400).json({
-        success: false,
-        message: "No results to send to Google Drive",
-      });
-      return;
-    }
+  if (results.length === 0) {
+    throw new Error("NO_RESULTS");
+  }
 
-    console.log(`Sending ${results.length} results to Google Drive in batch`);
+  console.log(`Sending ${results.length} results to Google Drive in batch`);
 
-    // Crear la sesión en Google Drive si no existe
-    const createResult = await createSessionGoogleDrive(
+  // Crear la sesión en Google Drive si no existe
+  const createResult = await createSessionGoogleDrive(
+    exp_data.driveFolderId,
+    tokenResult.access_token,
+    experimentID,
+    sessionId
+  );
+
+  // Si la sesión ya existe (409), continuamos de todas formas
+  if (!createResult.success && createResult.errorCode !== 409) {
+    throw new Error(
+      createResult.errorText || "Error creating session in Drive"
+    );
+  }
+
+  // Enviar todos los resultados a Google Drive
+  let failedCount = 0;
+  for (const result of results) {
+    const appendResult = await appendResultGoogleDrive(
       exp_data.driveFolderId,
       tokenResult.access_token,
       experimentID,
-      sessionId
+      sessionId,
+      result
     );
 
-    // Si la sesión ya existe (409), continuamos de todas formas
-    if (!createResult.success && createResult.errorCode !== 409) {
-      res.status(400).json({
-        success: false,
-        message: createResult.errorText || "Error creating session in Drive",
-      });
-      return;
+    if (!appendResult.success) {
+      failedCount++;
+      console.error("Failed to append result:", appendResult.errorText);
     }
-
-    // Enviar todos los resultados a Google Drive
-    let failedCount = 0;
-    for (const result of results) {
-      const appendResult = await appendResultGoogleDrive(
-        exp_data.driveFolderId,
-        tokenResult.access_token,
-        experimentID,
-        sessionId,
-        result
-      );
-
-      if (!appendResult.success) {
-        failedCount++;
-        console.error("Failed to append result:", appendResult.errorText);
-      }
-    }
-
-    if (failedCount > 0) {
-      res.status(400).json({
-        success: false,
-        message: `Failed to send ${failedCount} of ${results.length} results to Google Drive`,
-      });
-      return;
-    }
-
-    console.log("All results sent to Google Drive, cleaning up Firestore");
-
-    // Limpiar los datos temporales de Firestore
-    await session_ref.delete();
-
-    console.log("Session finished and cleaned up successfully");
-
-    res.status(200).json({
-      success: true,
-      message: "Session finished successfully",
-      resultsSent: results.length,
-    });
-  } catch (error) {
-    console.error("Error in handleFinishSession:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
-    });
   }
+
+  if (failedCount > 0) {
+    throw new Error(
+      `Failed to send ${failedCount} of ${results.length} results to Google Drive`
+    );
+  }
+
+  console.log("All results sent to Google Drive, cleaning up Firestore");
+
+  // Limpiar los datos temporales de Firestore
+  await session_ref.delete();
+
+  console.log("Session finished and cleaned up successfully");
+
+  return {
+    success: true,
+    message: "Session finished successfully",
+    resultsSent: results.length,
+  };
 }
+
+// Cloud Function para finalizar sesiones desconectadas automáticamente
+// Se dispara cuando se actualiza un nodo en /sessions/{experimentID}/{sessionId}
+export const finalizeDisconnectedSessions = onValueWritten(
+  {
+    ref: "/sessions/{experimentID}/{sessionId}",
+    region: "us-central1",
+  },
+  async (event) => {
+    const beforeData = event.data.before.val();
+    const afterData = event.data.after.val();
+
+    // Si no existe el nodo después del cambio, salir
+    if (!afterData) {
+      return null;
+    }
+
+    // Si ya fue procesado, salir inmediatamente (esto evita reprocesar)
+    if (afterData.finalizationProcessed === true) {
+      return null;
+    }
+
+    // SOLO procesar si needsFinalization está en true
+    if (afterData.needsFinalization !== true) {
+      return null;
+    }
+
+    // IMPORTANTE: Solo procesar si cambió de connected=true a connected=false
+    // Esto garantiza que es una desconexión/finalización real
+    const wasConnected = beforeData?.connected === true;
+    const isNowDisconnected = afterData.connected === false;
+
+    if (!wasConnected || !isNowDisconnected) {
+      // No es una transición de conectado a desconectado, salir
+      return null;
+    }
+
+    const experimentID = event.params.experimentID;
+    const sessionId = event.params.sessionId;
+
+    console.log(
+      `Processing session finalization: ${experimentID}/${sessionId}`,
+      `finished: ${
+        afterData.finished || false
+      }, disconnected: ${!afterData.connected}`
+    );
+
+    try {
+      // Usar la misma función unificada
+      const result = await finalizeSession(experimentID, sessionId);
+
+      // Marcar como procesado en Realtime Database
+      await event.data.after.ref.update({
+        finalizationProcessed: true,
+        processedAt: Date.now(),
+        resultsSent: result.resultsSent,
+      });
+
+      console.log(`Session ${sessionId} finalized successfully`);
+      return null;
+    } catch (error) {
+      console.error(`Error finalizing session ${sessionId}:`, error);
+
+      // Si el error es que no hay datos (SESSION_NOT_FOUND o NO_RESULTS),
+      // también marcar como procesado para evitar reintentos
+      const isNoDataError =
+        error.message === "SESSION_NOT_FOUND" || error.message === "NO_RESULTS";
+
+      await event.data.after.ref.update({
+        finalizationProcessed: true,
+        finalizationError: error.message,
+        processedAt: Date.now(),
+        ...(isNoDataError && { noDataToFinalize: true }),
+      });
+
+      return null;
+    }
+  }
+);
 
 // Función auxiliar para listar sesiones
 async function handleListSessions(req, res, experimentID) {
