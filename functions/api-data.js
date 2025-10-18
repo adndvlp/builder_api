@@ -220,7 +220,7 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
     );
 
     const participantNumber = sessionsResult.success
-      ? sessionsResult.sessions.length
+      ? sessionsResult.sessions.length + 1
       : 1;
 
     // Incrementar contador de sesiones en Firestore
