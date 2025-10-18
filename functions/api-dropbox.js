@@ -12,8 +12,20 @@ const db = getFirestore();
 // Configura tus credenciales de Dropbox
 const CLIENT_ID = "pn9j0lbuvbmu3wl";
 const CLIENT_SECRET = "hwbrvahrl8r3ssk";
-// const REDIRECT_URI = "https://test-e4cf9.firebaseapp.com/dropbox-callback"; // Debe coincidir con el de Dropbox Console
-const REDIRECT_URI = "http://localhost:5173/dropbox-callback"; // Debe coincidir con el de Dropbox Console
+
+// Función para determinar el REDIRECT_URI correcto basado en el request
+function getRedirectUri(req) {
+  // Si viene de la app Electron (puerto 8888)
+  if (req.get("referer")?.includes("localhost:8888")) {
+    return "http://localhost:8888/callback";
+  }
+  // Si es desarrollo web
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:5173/dropbox-callback";
+  }
+  // Producción web
+  return "https://test-e4cf9.firebaseapp.com/dropbox-callback";
+}
 
 // Endpoint para el callback de OAuth
 export const dropboxOAuthCallback = onRequest(async (req, res) => {
@@ -42,6 +54,12 @@ export const dropboxOAuthCallback = onRequest(async (req, res) => {
 
   try {
     console.log("Exchanging code for tokens...");
+
+    // Determinar el REDIRECT_URI correcto
+    // Priorizar el redirect_uri que viene en el query param (desde el frontend)
+    const REDIRECT_URI = req.query.redirect_uri || getRedirectUri(req);
+    console.log("Using REDIRECT_URI:", REDIRECT_URI);
+
     // Intercambia el código por tokens
     const tokenRes = await fetch("https://api.dropbox.com/oauth2/token", {
       method: "POST",
@@ -97,7 +115,19 @@ export const dropboxOAuthCallback = onRequest(async (req, res) => {
 
     console.log("Dropbox tokens saved successfully with expiration!");
 
-    // Redirigir de vuelta a la app con mensaje de éxito
+    // Redirigir de vuelta según el origen
+    // Si viene de Electron, no redirigir (la app ya tiene el resultado)
+    const isElectronRequest = req.get("referer")?.includes("localhost:8888");
+
+    if (isElectronRequest) {
+      // Responder con JSON para Electron
+      return res.status(200).json({
+        success: true,
+        message: "Dropbox connected successfully",
+      });
+    }
+
+    // Redirigir de vuelta a la app web con mensaje de éxito
     const redirectUrl =
       process.env.NODE_ENV === "production"
         ? "https://test-e4cf9.firebaseapp.com/settings?status=success&service=dropbox"
@@ -107,7 +137,18 @@ export const dropboxOAuthCallback = onRequest(async (req, res) => {
   } catch (error) {
     console.error("Error in dropboxOAuthCallback:", error);
 
-    // Redirigir de vuelta a la app con mensaje de error
+    // Verificar si viene de Electron
+    const isElectronRequest = req.get("referer")?.includes("localhost:8888");
+
+    if (isElectronRequest) {
+      // Responder con JSON para Electron
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+
+    // Redirigir de vuelta a la app web con mensaje de error
     const redirectUrl =
       process.env.NODE_ENV === "production"
         ? `https://test-e4cf9.firebaseapp.com/settings?status=error&service=dropbox&message=${encodeURIComponent(

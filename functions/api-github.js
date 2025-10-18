@@ -58,8 +58,20 @@ async function getGithubToken(uid) {
 // Configura tus credenciales de GitHub
 const CLIENT_ID = "Ov23limim0vbyTd5J4fK";
 const CLIENT_SECRET = "cdd3ae03ca594a2c16d8668b7698e816d8faebb0";
-const REDIRECT_URI = "http://localhost:5173/github-callback"; // Debe coincidir con el de GitHub Console
-// const REDIRECT_URI = "https://test-e4cf9.firebaseapp.com/github-callback"; // Para producción
+
+// Función para determinar el REDIRECT_URI correcto basado en el request
+function getRedirectUri(req) {
+  // Si viene de la app Electron (puerto 8888)
+  if (req.get("referer")?.includes("localhost:8888")) {
+    return "http://localhost:8888/callback";
+  }
+  // Si es desarrollo web
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:5173/github-callback";
+  }
+  // Producción web
+  return "https://test-e4cf9.firebaseapp.com/github-callback";
+}
 
 // Endpoint para el callback de OAuth
 export const githubOAuthCallback = onRequest(async (req, res) => {
@@ -88,6 +100,12 @@ export const githubOAuthCallback = onRequest(async (req, res) => {
 
   try {
     console.log("Exchanging code for tokens...");
+
+    // Determinar el REDIRECT_URI correcto
+    // Priorizar el redirect_uri que viene en el query param (desde el frontend)
+    const REDIRECT_URI = req.query.redirect_uri || getRedirectUri(req);
+    console.log("Using REDIRECT_URI:", REDIRECT_URI);
+
     // Intercambia el código por tokens
     const tokenRes = await fetch(
       "https://github.com/login/oauth/access_token",
@@ -128,7 +146,19 @@ export const githubOAuthCallback = onRequest(async (req, res) => {
 
     console.log("GitHub tokens saved successfully!");
 
-    // Redirigir de vuelta a la app con mensaje de éxito
+    // Redirigir de vuelta según el origen
+    // Si viene de Electron, no redirigir (la app ya tiene el resultado)
+    const isElectronRequest = req.get("referer")?.includes("localhost:8888");
+
+    if (isElectronRequest) {
+      // Responder con JSON para Electron
+      return res.status(200).json({
+        success: true,
+        message: "GitHub connected successfully",
+      });
+    }
+
+    // Redirigir de vuelta a la app web con mensaje de éxito
     const redirectUrl =
       process.env.NODE_ENV === "production"
         ? "https://test-e4cf9.firebaseapp.com/settings?status=success&service=github"
@@ -138,7 +168,18 @@ export const githubOAuthCallback = onRequest(async (req, res) => {
   } catch (error) {
     console.error("Error in githubOAuthCallback:", error);
 
-    // Redirigir de vuelta a la app con mensaje de error
+    // Verificar si viene de Electron
+    const isElectronRequest = req.get("referer")?.includes("localhost:8888");
+
+    if (isElectronRequest) {
+      // Responder con JSON para Electron
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+
+    // Redirigir de vuelta a la app web con mensaje de error
     const redirectUrl =
       process.env.NODE_ENV === "production"
         ? `https://test-e4cf9.firebaseapp.com/settings?status=error&service=github&message=${encodeURIComponent(

@@ -1,6 +1,4 @@
 import { apiData, finalizeDisconnectedSessions } from "./api-data.js";
-import { apiCondition } from "./api-condition.js";
-import { apiBase64 } from "./api-base64.js";
 import { apiCreateExperiment } from "./api-create-experiment.js";
 import { apiDeleteExperiment } from "./api-delete-experiment.js";
 import { dropboxOAuthCallback } from "./api-dropbox.js";
@@ -20,8 +18,6 @@ setGlobalOptions({
 
 export {
   apiData as apidata,
-  apiCondition as apicondition,
-  apiBase64 as apibase64,
   apiCreateExperiment as apicreateexperiment,
   apiDeleteExperiment as apideleteexperiment,
   dropboxOAuthCallback,
