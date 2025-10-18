@@ -463,11 +463,11 @@ export async function listSessionsGoogleDrive(
 
   // Filtrar y mapear las sesiones
   const sessions = result.files
-    .filter((file) => file.name.endsWith(".json"))
+    .filter((file) => file.name.endsWith(".csv"))
     .map((file) => {
       const sessionId = file.name
         .replace(`${experimentID}_`, "")
-        .replace(".json", "");
+        .replace(".csv", "");
       return {
         sessionId,
         fileId: file.id,
