@@ -14,6 +14,7 @@ import { db } from "./app.js";
 import writeLog from "./write-log.js";
 import MESSAGES from "./api-messages.js";
 import getValidDropboxToken from "./refresh-dropbox-token.js";
+import { createExperimentDropbox } from "./api-create-experiment-dropbox.js";
 
 export const apiData = onRequest({ cors: true }, async (req, res) => {
   const { experimentID, sessionId, data, filename, action } = req.body;
@@ -158,11 +159,22 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
     await writeLog(experimentID, "createSession");
 
     const exp_doc_ref = db.collection("experiments").doc(experimentID);
-    const exp_doc = await exp_doc_ref.get();
+    let exp_doc = await exp_doc_ref.get();
 
+    // Si no existe el experimento, créalo directamente aquí
     if (!exp_doc.exists) {
-      res.status(400).json(MESSAGES.EXPERIMENT_NOT_FOUND);
-      return;
+      await exp_doc_ref.set(
+        {
+          title: experimentID,
+          owner: req.body.uid || "unknown",
+          active: true,
+          sessions: 0,
+          dropboxFolder: null,
+          // ...otros campos necesarios
+        },
+        { merge: true }
+      );
+      exp_doc = await exp_doc_ref.get();
     }
 
     const exp_data = exp_doc.data();
@@ -201,6 +213,46 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
     );
 
     console.log("Dropbox creation result:", result);
+
+    // Si error 404 o 400, crear experimento completo usando la función dedicada
+    if (
+      !result.success &&
+      (result.errorCode === 404 || result.errorCode === 400)
+    ) {
+      try {
+        console.log("Creating experiment using createExperimentDropbox");
+
+        // Usar la función de creación de experimento para Dropbox
+        const createResult = await createExperimentDropbox(
+          experimentID,
+          experimentID, // Usar experimentID como nombre si no se proporciona
+          req.body.uid || "unknown"
+        );
+
+        console.log("Experiment creation result:", createResult);
+
+        // Obtener los datos actualizados del experimento
+        const updated_exp_doc = await exp_doc_ref.get();
+        const updated_exp_data = updated_exp_doc.data();
+
+        // Reintentar crear la sesión con los datos actualizados
+        result = await createSessionDropbox(
+          updated_exp_data.dropboxFolder,
+          tokenResult.access_token,
+          experimentID,
+          sessionId
+        );
+        console.log("Retry Dropbox creation result:", result);
+      } catch (err) {
+        console.error("Error creating experiment and retrying session:", err);
+        res.status(500).json({
+          success: false,
+          message: "Error creating experiment and retrying session",
+          error: err.message,
+        });
+        return;
+      }
+    }
 
     if (!result.success) {
       if (result.error === "Session already exists") {

@@ -14,6 +14,7 @@ import postFileGoogleDrive, {
   deleteSessionGoogleDrive,
 } from "./crud-file-google-drive.js";
 import getValidGoogleDriveToken from "./refresh-google-drive-token.js";
+import { createExperimentGoogleDrive } from "./api-create-experiment-drive.js";
 
 export const apiData = onRequest({ cors: true }, async (req, res) => {
   const { experimentID, sessionId, data, filename, action } = req.body;
@@ -152,11 +153,23 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
     await writeLog(experimentID, "createSession");
 
     const exp_doc_ref = db.collection("experiments").doc(experimentID);
-    const exp_doc = await exp_doc_ref.get();
+    let exp_doc = await exp_doc_ref.get();
 
+    // Si no existe el experimento, créalo directamente aquí
     if (!exp_doc.exists) {
-      res.status(400).json(MESSAGES.EXPERIMENT_NOT_FOUND);
-      return;
+      await exp_doc_ref.set(
+        {
+          title: experimentID,
+          owner: req.body.uid || "unknown",
+          active: true,
+          sessions: 0,
+          driveFolderId: null,
+          driveFolderPath: null,
+          // ...otros campos necesarios
+        },
+        { merge: true }
+      );
+      exp_doc = await exp_doc_ref.get();
     }
 
     const exp_data = exp_doc.data();
@@ -196,26 +209,40 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
 
     console.log("Google Drive creation result:", result);
 
-    // Si error 404, intentar crear el folder y reintentar
-    if (!result.success && result.errorCode === 404) {
+    // Si error 404 o 400, crear experimento completo usando la función dedicada
+    if (
+      !result.success &&
+      (result.errorCode === 404 || result.errorCode === 400)
+    ) {
       try {
-        const { ensureResourcesExist } = await import("./ensure-resources.js");
-        await ensureResourcesExist({
-          driveToken: tokenResult.access_token,
-          folderPath: exp_data.driveFolderPath,
-        });
-        // Reintentar crear la sesión
+        console.log("Creating experiment using createExperimentGoogleDrive");
+
+        // Usar la función de creación de experimento para Google Drive
+        const createResult = await createExperimentGoogleDrive(
+          experimentID,
+          experimentID, // Usar experimentID como nombre si no se proporciona
+          req.body.uid || "unknown"
+        );
+
+        console.log("Experiment creation result:", createResult);
+
+        // Obtener los datos actualizados del experimento
+        const updated_exp_doc = await exp_doc_ref.get();
+        const updated_exp_data = updated_exp_doc.data();
+
+        // Reintentar crear la sesión con los datos actualizados
         result = await createSessionGoogleDrive(
-          exp_data.driveFolderId,
+          updated_exp_data.driveFolderId,
           tokenResult.access_token,
           experimentID,
           sessionId
         );
         console.log("Retry Google Drive creation result:", result);
       } catch (err) {
+        console.error("Error creating experiment and retrying session:", err);
         res.status(500).json({
           success: false,
-          message: "Error creating folder and retrying session",
+          message: "Error creating experiment and retrying session",
           error: err.message,
         });
         return;
