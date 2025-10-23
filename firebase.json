@@ -8,21 +8,7 @@
   },
   "hosting": {
     "public": "public",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "rewrites": [
-      {
-        "source": "/api/data",
-        "function": "apidata"
-      },
-      {
-        "source": "/api/condition",
-        "function": "apicondition"
-      },
-      {
-        "source": "/api/base64",
-        "function": "apibase64"
-      }
-    ]
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
   },
   "emulators": {
     "auth": {

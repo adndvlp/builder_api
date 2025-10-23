@@ -1,13 +1,13 @@
 import fetch from "node-fetch";
 
-// Función para crear una nueva sesión en Dropbox
+// Función para crear una nueva sesión en Dropbox (ahora como CSV)
 export async function createSessionDropbox(
   dropboxFolder,
   dropboxToken,
   experimentID,
   sessionId
 ) {
-  const filePath = `${dropboxFolder}/${experimentID}_${sessionId}.json`;
+  const filePath = `${dropboxFolder}/${experimentID}_${sessionId}.csv`;
 
   // Verificar si el archivo ya existe
   const checkResult = await fetch(
@@ -31,13 +31,8 @@ export async function createSessionDropbox(
     };
   }
 
-  // Crear archivo inicial con estructura básica
-  const initialData = {
-    experimentID,
-    sessionId,
-    createdAt: new Date().toISOString(),
-    data: [],
-  };
+  // Crear archivo CSV vacío (sin encabezados porque aún no sabemos las columnas)
+  const initialCSV = "";
 
   const uploadResult = await fetch(
     "https://content.dropboxapi.com/2/files/upload",
@@ -53,7 +48,7 @@ export async function createSessionDropbox(
         }),
         "Content-Type": "application/octet-stream",
       },
-      body: JSON.stringify(initialData),
+      body: initialCSV,
     }
   );
 
@@ -90,17 +85,17 @@ export async function createSessionDropbox(
   };
 }
 
-// Función para agregar respuestas a una sesión existente en Dropbox
+// Función para agregar una fila CSV a una sesión existente en Dropbox
 export async function appendResultDropbox(
   dropboxFolder,
   dropboxToken,
   experimentID,
   sessionId,
-  response
+  csvRow
 ) {
-  const filePath = `${dropboxFolder}/${experimentID}_${sessionId}.json`;
+  const filePath = `${dropboxFolder}/${experimentID}_${sessionId}.csv`;
 
-  // Descargar el archivo existente
+  // Descargar el archivo CSV existente
   const downloadResult = await fetch(
     "https://content.dropboxapi.com/2/files/download",
     {
@@ -118,35 +113,22 @@ export async function appendResultDropbox(
     return {
       success: false,
       error: "Session not found",
+      errorCode: downloadResult.status,
     };
   }
 
-  const fileContent = await downloadResult.text();
-  let sessionData;
+  let existingCSV = await downloadResult.text();
 
-  try {
-    sessionData = JSON.parse(fileContent);
-  } catch (err) {
-    return {
-      success: false,
-      error: "Invalid JSON in session file",
-    };
+  // Si el archivo está vacío, la primera línea CSV será el encabezado
+  // Si ya tiene contenido, agregamos una nueva línea
+  let updatedCSV;
+  if (existingCSV.trim() === "") {
+    // Primer registro: csvRow ya incluye el encabezado
+    updatedCSV = csvRow;
+  } else {
+    // Registros subsecuentes: agregar nueva línea
+    updatedCSV = existingCSV + "\n" + csvRow;
   }
-
-  // Parsear response si es string
-  if (typeof response === "string") {
-    try {
-      response = JSON.parse(response);
-    } catch (err) {
-      return {
-        success: false,
-        error: "Invalid response format",
-      };
-    }
-  }
-
-  // Agregar la nueva respuesta
-  sessionData.data.push(response);
 
   // Subir el archivo actualizado
   const uploadResult = await fetch(
@@ -163,7 +145,7 @@ export async function appendResultDropbox(
         }),
         "Content-Type": "application/octet-stream",
       },
-      body: JSON.stringify(sessionData),
+      body: updatedCSV,
     }
   );
 
@@ -196,7 +178,7 @@ export async function appendResultDropbox(
   return {
     success: true,
     id: result.id,
-    participantNumber: 1, // Se debe calcular listando todos los archivos
+    participantNumber: 1,
   };
 }
 
@@ -249,18 +231,18 @@ export async function listSessionsDropbox(
     };
   }
 
-  // Filtrar archivos que correspondan al experimentID
+  // Filtrar archivos que correspondan al experimentID (ahora busca .csv)
   const sessions = result.entries
     .filter(
       (entry) =>
         entry[".tag"] === "file" &&
         entry.name.startsWith(`${experimentID}_`) &&
-        entry.name.endsWith(".json")
+        entry.name.endsWith(".csv")
     )
     .map((entry) => {
       const sessionId = entry.name
         .replace(`${experimentID}_`, "")
-        .replace(".json", "");
+        .replace(".csv", "");
       return {
         sessionId,
         experimentID,
@@ -284,9 +266,9 @@ export async function downloadSessionDropbox(
   experimentID,
   sessionId
 ) {
-  const filePath = `${dropboxFolder}/${experimentID}_${sessionId}.json`;
+  const filePath = `${dropboxFolder}/${experimentID}_${sessionId}.csv`;
 
-  // Descargar el archivo
+  // Descargar el archivo CSV directamente
   const downloadResult = await fetch(
     "https://content.dropboxapi.com/2/files/download",
     {
@@ -307,60 +289,12 @@ export async function downloadSessionDropbox(
     };
   }
 
-  const fileContent = await downloadResult.text();
-  let sessionData;
-
-  try {
-    sessionData = JSON.parse(fileContent);
-  } catch (err) {
-    return {
-      success: false,
-      error: "Invalid JSON in session file",
-    };
-  }
-
-  const filteredData = sessionData.data;
-
-  if (!filteredData.length) {
-    return {
-      success: false,
-      error: "No valid data to export",
-    };
-  }
-
-  // Extraer todos los campos únicos
-  const allFields = Array.from(
-    new Set(filteredData.flatMap((row) => Object.keys(row)))
-  );
-
-  // Convertir a CSV manualmente
-  const csvRows = [];
-  csvRows.push(allFields.join(","));
-
-  filteredData.forEach((row) => {
-    const values = allFields.map((field) => {
-      const value = row[field];
-      if (value === null || value === undefined) return "";
-      const stringValue = String(value);
-      // Escapar comillas y envolver en comillas si contiene coma, comilla o salto de línea
-      if (
-        stringValue.includes(",") ||
-        stringValue.includes('"') ||
-        stringValue.includes("\n")
-      ) {
-        return `"${stringValue.replace(/"/g, '""')}"`;
-      }
-      return stringValue;
-    });
-    csvRows.push(values.join(","));
-  });
-
-  const csv = csvRows.join("\n");
+  const csv = await downloadResult.text();
 
   return {
     success: true,
     csv,
-    filename: `session_${sessionId}.csv`,
+    filename: `${experimentID}_${sessionId}.csv`,
   };
 }
 
@@ -371,7 +305,7 @@ export async function deleteSessionDropbox(
   experimentID,
   sessionId
 ) {
-  const filePath = `${dropboxFolder}/${experimentID}_${sessionId}.json`;
+  const filePath = `${dropboxFolder}/${experimentID}_${sessionId}.csv`;
 
   const deleteResult = await fetch(
     "https://api.dropboxapi.com/2/files/delete_v2",

@@ -498,7 +498,7 @@ export async function downloadSessionGoogleDrive(
   experimentID,
   sessionId
 ) {
-  const fileName = `${experimentID}_${sessionId}.json`;
+  const fileName = `${experimentID}_${sessionId}.csv`;
 
   // Buscar el archivo
   const searchQuery = `name='${fileName}' and '${driveFolderId}' in parents and trashed=false`;
@@ -526,7 +526,7 @@ export async function downloadSessionGoogleDrive(
 
   const fileId = searchData.files[0].id;
 
-  // Descargar el archivo
+  // Descargar el archivo CSV directamente
   const downloadResult = await fetch(
     `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
     {
@@ -545,56 +545,11 @@ export async function downloadSessionGoogleDrive(
     };
   }
 
-  const fileContent = await downloadResult.text();
-  let sessionData;
-
-  try {
-    sessionData = JSON.parse(fileContent);
-  } catch (err) {
-    return {
-      success: false,
-      errorText: "Error parsing session data",
-    };
-  }
-
-  const filteredData = sessionData.data;
-
-  if (!filteredData.length) {
-    return {
-      success: false,
-      errorText: "No data in session",
-    };
-  }
-
-  // Extraer todos los campos únicos
-  const allFields = Array.from(
-    new Set(filteredData.flatMap((row) => Object.keys(row)))
-  );
-
-  // Convertir a CSV manualmente
-  const csvRows = [];
-  csvRows.push(allFields.join(","));
-
-  for (const row of filteredData) {
-    const values = allFields.map((field) => {
-      const value = row[field];
-      if (value === null || value === undefined) return "";
-      const stringValue = String(value);
-      if (
-        stringValue.includes(",") ||
-        stringValue.includes('"') ||
-        stringValue.includes("\n")
-      ) {
-        return `"${stringValue.replace(/"/g, '""')}"`;
-      }
-      return stringValue;
-    });
-    csvRows.push(values.join(","));
-  }
+  const csv = await downloadResult.text();
 
   return {
     success: true,
-    csv: csvRows.join("\n"),
+    csv,
   };
 }
 
@@ -612,7 +567,7 @@ export async function deleteSessionGoogleDrive(
   experimentID,
   sessionId
 ) {
-  const fileName = `${experimentID}_${sessionId}.json`;
+  const fileName = `${experimentID}_${sessionId}.csv`;
 
   // Buscar el archivo
   const searchQuery = `name='${fileName}' and '${driveFolderId}' in parents and trashed=false`;

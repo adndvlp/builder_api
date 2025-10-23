@@ -22,33 +22,33 @@ export const apiDataHandler = onRequest({ cors: true }, async (req, res) => {
   // Distribuir según acción
   if (action === "createExperiment") {
     if (storage === "drive") {
-      return await apiCreateExperimentDrive.run(req, res);
+      return await apiCreateExperimentDrive(req, res);
     } else {
-      return await apiCreateExperimentDropbox.run(req, res);
+      return await apiCreateExperimentDropbox(req, res);
     }
   }
 
   if (action === "deleteExperiment") {
     if (storage === "drive") {
-      return await apiDeleteExperimentDrive.run(req, res);
+      return await apiDeleteExperimentDrive(req, res);
     } else {
-      return await apiDeleteExperimentDropbox.run(req, res);
+      return await apiDeleteExperimentDropbox(req, res);
     }
   }
 
   // Finalizar sesión (action: "finish")
   if (action === "finish") {
     if (storage === "drive") {
-      return await apiDataDrive.run(req, res);
+      return await apiDataDrive(req, res);
     } else {
-      return await apiDataDropbox.run(req, res);
+      return await apiDataDropbox(req, res);
     }
   }
 
   // Acciones estándar de datos (list, download, delete, createSession, appendResult, etc.)
   if (storage === "drive") {
-    return await apiDataDrive.run(req, res);
+    return await apiDataDrive(req, res);
   } else {
-    return await apiDataDropbox.run(req, res);
+    return await apiDataDropbox(req, res);
   }
 });

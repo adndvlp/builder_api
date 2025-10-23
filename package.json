@@ -4,5 +4,8 @@
   "private": true,
   "scripts": {
     "emulators": "firebase emulators:start --import=./emulator-backup --only functions,auth,firestore"
+  },
+  "dependencies": {
+    "firebase-functions": "^6.6.0"
   }
 }

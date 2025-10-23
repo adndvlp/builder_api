@@ -17,7 +17,7 @@ setGlobalOptions({
 });
 
 export {
-  apiDataHandler,
+  apiDataHandler as apidata,
   dropboxOAuthCallback,
   finalizeDisconnectedSessionsDrive,
   finalizeDisconnectedSessionsDropbox,

@@ -1,4 +1,5 @@
 import { onRequest } from "firebase-functions/v2/https";
+import { onValueWritten } from "firebase-functions/v2/database";
 import { FieldValue } from "firebase-admin/firestore";
 import validateJSON from "./validate-json.js";
 import validateCSV from "./validate-csv.js";
@@ -28,6 +29,39 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
 
   if (action === "delete" && experimentID && sessionId) {
     return await handleDeleteSession(req, res, experimentID, sessionId);
+  }
+
+  if (action === "finish" && experimentID && sessionId) {
+    try {
+      const result = await finalizeSessionDropbox(experimentID, sessionId);
+      res.status(200).json(result);
+    } catch (error) {
+      console.error("Error in finish action:", error);
+
+      // Mapear errores a respuestas HTTP apropiadas
+      if (error.message === "EXPERIMENT_NOT_FOUND") {
+        res.status(400).json(MESSAGES.EXPERIMENT_NOT_FOUND);
+      } else if (error.message === "INVALID_DROPBOX_TOKEN") {
+        res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
+      } else if (error.message === "SESSION_NOT_FOUND") {
+        res.status(400).json({
+          success: false,
+          message: "Session not found in temporary storage",
+        });
+      } else if (error.message === "NO_RESULTS") {
+        res.status(400).json({
+          success: false,
+          message: "No results to send to Dropbox",
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: "Internal server error",
+          error: error.message,
+        });
+      }
+    }
+    return;
   }
 
   // Detectar si es creación de sesión (experimentID, sessionId, sin data ni filename)
@@ -193,7 +227,7 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
     );
 
     const participantNumber = sessionsResult.success
-      ? sessionsResult.sessions.length
+      ? sessionsResult.sessions.length + 1
       : 1;
 
     // Incrementar contador de sesiones en Firestore
@@ -223,7 +257,7 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
   }
 }
 
-// Función auxiliar para agregar resultado
+// Función auxiliar para agregar resultado (ahora guarda en Firestore temporalmente)
 async function handleAppendResult(req, res, experimentID, sessionId, data) {
   try {
     await writeLog(experimentID, "appendResult");
@@ -242,15 +276,52 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
       return;
     }
 
-    // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
-    const tokenResult = await getValidDropboxToken(exp_data.owner);
+    // Si el experimento acepta CSV, validar y guardar el string CSV directamente
+    if (exp_data.allowCSV) {
+      // Validar CSV si está configurado
+      if (exp_data.useValidation) {
+        const valid = validateCSV(data, exp_data.requiredFields);
+        if (!valid) {
+          res.status(400).json(MESSAGES.INVALID_DATA);
+          return;
+        }
+      }
 
-    if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
+      console.log("Appending CSV result to Firestore temporarily:", {
+        experimentID,
+        sessionId,
+      });
+
+      // Guardar el CSV como string en Firestore
+      const session_ref = db
+        .collection("experiments")
+        .doc(experimentID)
+        .collection("sessions")
+        .doc(sessionId);
+
+      const session_doc = await session_ref.get();
+
+      if (!session_doc.exists) {
+        await session_ref.set({
+          createdAt: FieldValue.serverTimestamp(),
+          results: [data],
+        });
+      } else {
+        await session_ref.update({
+          results: FieldValue.arrayUnion(data),
+        });
+      }
+
+      console.log("CSV result appended to Firestore successfully");
+
+      res.status(201).json({
+        success: true,
+        message: "CSV result appended successfully to temporary storage",
+      });
       return;
     }
 
-    // Parsear data si viene como string
+    // Si no es CSV, intentar parsear como JSON (flujo original)
     let parsedData = data;
     if (typeof data === "string") {
       try {
@@ -258,52 +329,57 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
       } catch (err) {
         res.status(400).json({
           success: false,
-          message: "Invalid data format",
+          message: "Invalid JSON in data parameter",
         });
         return;
       }
     }
 
-    console.log("Appending data to session:", {
+    // Validar los datos si está configurado
+    if (exp_data.useValidation) {
+      let valid = false;
+      if (exp_data.allowJSON) {
+        valid = validateJSON(
+          JSON.stringify([parsedData]),
+          exp_data.requiredFields
+        );
+      }
+      if (!valid) {
+        res.status(400).json(MESSAGES.INVALID_DATA);
+        return;
+      }
+    }
+
+    console.log("Appending JSON result to Firestore temporarily:", {
       experimentID,
       sessionId,
-      dataKeys: Object.keys(parsedData),
     });
 
-    // Agregar el resultado a la sesión en Dropbox
-    const result = await appendResultDropbox(
-      exp_data.dropboxFolder,
-      tokenResult.access_token,
-      experimentID,
-      sessionId,
-      parsedData
-    );
+    // Guardar el resultado temporalmente en Firestore
+    const session_ref = db
+      .collection("experiments")
+      .doc(experimentID)
+      .collection("sessions")
+      .doc(sessionId);
 
-    console.log("Append result:", result);
+    const session_doc = await session_ref.get();
 
-    if (!result.success) {
-      if (result.error === "Session not found") {
-        console.error("Session not found:", sessionId);
-        res.status(404).json({
-          success: false,
-          message: "Session not found",
-        });
-        return;
-      }
-      console.error("Failed to append data:", result);
-      res.status(400).json({
-        success: false,
-        message: "Failed to append data",
-        error: result.errorText,
+    if (!session_doc.exists) {
+      await session_ref.set({
+        createdAt: FieldValue.serverTimestamp(),
+        results: [parsedData],
       });
-      return;
+    } else {
+      await session_ref.update({
+        results: FieldValue.arrayUnion(parsedData),
+      });
     }
 
-    console.log("Data appended successfully to session:", sessionId);
+    console.log("JSON result appended to Firestore successfully");
 
-    res.status(200).json({
+    res.status(201).json({
       success: true,
-      message: "Data appended successfully",
+      message: "JSON result appended successfully to temporary storage",
     });
   } catch (error) {
     console.error("Error in handleAppendResult:", error);
@@ -335,6 +411,11 @@ export async function finalizeSessionDropbox(experimentID, sessionId) {
     throw new Error("INVALID_DROPBOX_TOKEN");
   }
 
+  console.log("Finishing session - fetching results from Firestore:", {
+    experimentID,
+    sessionId,
+  });
+
   // Obtener todos los resultados de Firestore
   const session_ref = db
     .collection("experiments")
@@ -354,6 +435,8 @@ export async function finalizeSessionDropbox(experimentID, sessionId) {
   if (results.length === 0) {
     throw new Error("NO_RESULTS");
   }
+
+  console.log(`Sending ${results.length} results to Dropbox in batch`);
 
   // Crear la sesión en Dropbox si no existe
   const createResult = await createSessionDropbox(
@@ -385,6 +468,7 @@ export async function finalizeSessionDropbox(experimentID, sessionId) {
     );
     if (!appendResult.success) {
       failedCount++;
+      console.error("Failed to append result:", appendResult.errorText);
     }
   }
 
@@ -394,8 +478,12 @@ export async function finalizeSessionDropbox(experimentID, sessionId) {
     );
   }
 
+  console.log("All results sent to Dropbox, cleaning up Firestore");
+
   // Limpiar los datos temporales de Firestore
   await session_ref.delete();
+
+  console.log("Session finished and cleaned up successfully");
 
   return {
     success: true,
@@ -405,7 +493,7 @@ export async function finalizeSessionDropbox(experimentID, sessionId) {
 }
 
 // Cloud Function para finalizar sesiones desconectadas automáticamente en Dropbox
-import { onValueWritten } from "firebase-functions/v2/database";
+// Se dispara cuando se actualiza un nodo en /sessions/{experimentID}/{sessionId}
 export const finalizeDisconnectedSessionsDropbox = onValueWritten(
   {
     ref: "/sessions/{experimentID}/{sessionId}",
@@ -415,39 +503,69 @@ export const finalizeDisconnectedSessionsDropbox = onValueWritten(
     const beforeData = event.data.before.val();
     const afterData = event.data.after.val();
 
+    // Si no existe el nodo después del cambio, salir
     if (!afterData) {
       return null;
     }
+
+    // Si ya fue procesado, salir inmediatamente (esto evita reprocesar)
     if (afterData.finalizationProcessed === true) {
       return null;
     }
+
+    // SOLO procesar si needsFinalization está en true
     if (afterData.needsFinalization !== true) {
       return null;
     }
+
+    // IMPORTANTE: Solo procesar si cambió de connected=true a connected=false
+    // Esto garantiza que es una desconexión/finalización real
     const wasConnected = beforeData?.connected === true;
     const isNowDisconnected = afterData.connected === false;
+
     if (!wasConnected || !isNowDisconnected) {
+      // No es una transición de conectado a desconectado, salir
       return null;
     }
+
     const experimentID = event.params.experimentID;
     const sessionId = event.params.sessionId;
+
+    console.log(
+      `Processing session finalization: ${experimentID}/${sessionId}`,
+      `finished: ${
+        afterData.finished || false
+      }, disconnected: ${!afterData.connected}`
+    );
+
     try {
+      // Usar la función unificada
       const result = await finalizeSessionDropbox(experimentID, sessionId);
+
+      // Marcar como procesado en Realtime Database
       await event.data.after.ref.update({
         finalizationProcessed: true,
         processedAt: Date.now(),
         resultsSent: result.resultsSent,
       });
+
+      console.log(`Session ${sessionId} finalized successfully`);
       return null;
     } catch (error) {
+      console.error(`Error finalizing session ${sessionId}:`, error);
+
+      // Si el error es que no hay datos (SESSION_NOT_FOUND o NO_RESULTS),
+      // también marcar como procesado para evitar reintentos
       const isNoDataError =
         error.message === "SESSION_NOT_FOUND" || error.message === "NO_RESULTS";
+
       await event.data.after.ref.update({
         finalizationProcessed: true,
         finalizationError: error.message,
         processedAt: Date.now(),
         ...(isNoDataError && { noDataToFinalize: true }),
       });
+
       return null;
     }
   }
@@ -575,11 +693,13 @@ async function handleDownloadSession(req, res, experimentID, sessionId) {
 
     console.log("Session downloaded successfully:", sessionId);
 
-    res.status(200).json({
-      success: true,
-      csv: result.csv,
-      filename: result.filename,
-    });
+    // Enviar el CSV como respuesta (igual que Drive)
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${experimentID}_${sessionId}.csv"`
+    );
+    res.status(200).send(result.csv);
   } catch (error) {
     console.error("Error in handleDownloadSession:", error);
     res.status(500).json({
