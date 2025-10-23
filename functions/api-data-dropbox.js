@@ -315,6 +315,144 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
   }
 }
 
+// Función auxiliar INTERNA para finalizar sesión en Dropbox (lógica pura sin req/res)
+export async function finalizeSessionDropbox(experimentID, sessionId) {
+  await writeLog(experimentID, "finishSessionDropbox");
+
+  const exp_doc_ref = db.collection("experiments").doc(experimentID);
+  const exp_doc = await exp_doc_ref.get();
+
+  if (!exp_doc.exists) {
+    throw new Error("EXPERIMENT_NOT_FOUND");
+  }
+
+  const exp_data = exp_doc.data();
+
+  // Obtener token válido de Dropbox
+  const tokenResult = await getValidDropboxToken(exp_data.owner);
+
+  if (!tokenResult.success) {
+    throw new Error("INVALID_DROPBOX_TOKEN");
+  }
+
+  // Obtener todos los resultados de Firestore
+  const session_ref = db
+    .collection("experiments")
+    .doc(experimentID)
+    .collection("sessions")
+    .doc(sessionId);
+
+  const session_doc = await session_ref.get();
+
+  if (!session_doc.exists) {
+    throw new Error("SESSION_NOT_FOUND");
+  }
+
+  const session_data = session_doc.data();
+  const results = session_data.results || [];
+
+  if (results.length === 0) {
+    throw new Error("NO_RESULTS");
+  }
+
+  // Crear la sesión en Dropbox si no existe
+  const createResult = await createSessionDropbox(
+    exp_data.dropboxFolder,
+    tokenResult.access_token,
+    experimentID,
+    sessionId
+  );
+
+  // Si la sesión ya existe (409), continuamos de todas formas
+  if (
+    !createResult.success &&
+    createResult.error !== "Session already exists"
+  ) {
+    throw new Error(
+      createResult.errorText || "Error creating session in Dropbox"
+    );
+  }
+
+  // Enviar todos los resultados a Dropbox
+  let failedCount = 0;
+  for (const result of results) {
+    const appendResult = await appendResultDropbox(
+      exp_data.dropboxFolder,
+      tokenResult.access_token,
+      experimentID,
+      sessionId,
+      result
+    );
+    if (!appendResult.success) {
+      failedCount++;
+    }
+  }
+
+  if (failedCount > 0) {
+    throw new Error(
+      `Failed to send ${failedCount} of ${results.length} results to Dropbox`
+    );
+  }
+
+  // Limpiar los datos temporales de Firestore
+  await session_ref.delete();
+
+  return {
+    success: true,
+    message: "Session finished successfully",
+    resultsSent: results.length,
+  };
+}
+
+// Cloud Function para finalizar sesiones desconectadas automáticamente en Dropbox
+import { onValueWritten } from "firebase-functions/v2/database";
+export const finalizeDisconnectedSessionsDropbox = onValueWritten(
+  {
+    ref: "/sessions/{experimentID}/{sessionId}",
+    region: "us-central1",
+  },
+  async (event) => {
+    const beforeData = event.data.before.val();
+    const afterData = event.data.after.val();
+
+    if (!afterData) {
+      return null;
+    }
+    if (afterData.finalizationProcessed === true) {
+      return null;
+    }
+    if (afterData.needsFinalization !== true) {
+      return null;
+    }
+    const wasConnected = beforeData?.connected === true;
+    const isNowDisconnected = afterData.connected === false;
+    if (!wasConnected || !isNowDisconnected) {
+      return null;
+    }
+    const experimentID = event.params.experimentID;
+    const sessionId = event.params.sessionId;
+    try {
+      const result = await finalizeSessionDropbox(experimentID, sessionId);
+      await event.data.after.ref.update({
+        finalizationProcessed: true,
+        processedAt: Date.now(),
+        resultsSent: result.resultsSent,
+      });
+      return null;
+    } catch (error) {
+      const isNoDataError =
+        error.message === "SESSION_NOT_FOUND" || error.message === "NO_RESULTS";
+      await event.data.after.ref.update({
+        finalizationProcessed: true,
+        finalizationError: error.message,
+        processedAt: Date.now(),
+        ...(isNoDataError && { noDataToFinalize: true }),
+      });
+      return null;
+    }
+  }
+);
+
 // Función auxiliar para listar sesiones
 async function handleListSessions(req, res, experimentID) {
   try {

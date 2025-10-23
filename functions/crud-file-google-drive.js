@@ -90,7 +90,7 @@ async function findOrCreateFolder(
 /**
  * Crea una estructura de carpetas en Google Drive
  * @param {string} accessToken - Token de acceso de Google Drive
- * @param {string} folderPath - Ruta de la carpeta (ej: "/DataPipe/ExperimentName")
+ * @param {string} folderPath - Ruta de la carpeta (ej: "/ExpBuilder/ExperimentName")
  * @returns {Promise<Object>} - Objeto con el resultado
  */
 export async function createFolderGoogleDrive(accessToken, folderPath) {
@@ -138,7 +138,7 @@ export async function createFolderGoogleDrive(accessToken, folderPath) {
 /**
  * Elimina una carpeta y todo su contenido en Google Drive
  * @param {string} accessToken - Token de acceso de Google Drive
- * @param {string} folderPath - Ruta de la carpeta
+ * @param {string} folderPath - Ruta de la carpeta (ej: "/ExpBuilder/ExperimentName")
  * @returns {Promise<Object>} - Objeto con el resultado
  */
 export async function deleteFolderGoogleDrive(accessToken, folderPath) {

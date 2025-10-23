@@ -1,6 +1,6 @@
-import { apiData, finalizeDisconnectedSessions } from "./api-data.js";
-import { apiCreateExperiment } from "./api-create-experiment.js";
-import { apiDeleteExperiment } from "./api-delete-experiment.js";
+import { apiDataHandler } from "./api-handler.js";
+import { finalizeDisconnectedSessionsDropbox } from "./api-data-dropbox.js";
+import { finalizeDisconnectedSessionsDrive } from "./api-data-drive.js";
 import { dropboxOAuthCallback } from "./api-dropbox.js";
 import {
   githubOAuthCallback,
@@ -17,15 +17,14 @@ setGlobalOptions({
 });
 
 export {
-  apiData as apidata,
-  apiCreateExperiment as apicreateexperiment,
-  apiDeleteExperiment as apideleteexperiment,
+  apiDataHandler,
   dropboxOAuthCallback,
+  finalizeDisconnectedSessionsDrive,
+  finalizeDisconnectedSessionsDropbox,
   githubOAuthCallback,
   githubCreateAndPublish,
   githubDeleteRepository,
   githubGetRepository,
   githubUpdateHtml,
   googleDriveOAuthCallback,
-  finalizeDisconnectedSessions,
 };

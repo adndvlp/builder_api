@@ -26,7 +26,7 @@ export const apiCreateExperiment = onRequest(
 
     try {
       // Crear la ruta de la carpeta en Dropbox usando el nombre del experimento
-      const folderPath = `/DataPipe/${experimentName}`;
+      const folderPath = `/ExpBuilder/${experimentName}`;
 
       // Obtener el token de Dropbox del usuario si se proporciona uid
       let dropboxFolderCreated = false;

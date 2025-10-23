@@ -187,7 +187,7 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
     });
 
     // Crear la sesión en Google Drive
-    const result = await createSessionGoogleDrive(
+    let result = await createSessionGoogleDrive(
       exp_data.driveFolderId,
       tokenResult.access_token,
       experimentID,
@@ -195,6 +195,32 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
     );
 
     console.log("Google Drive creation result:", result);
+
+    // Si error 404, intentar crear el folder y reintentar
+    if (!result.success && result.errorCode === 404) {
+      try {
+        const { ensureResourcesExist } = await import("./ensure-resources.js");
+        await ensureResourcesExist({
+          driveToken: tokenResult.access_token,
+          folderPath: exp_data.driveFolderPath,
+        });
+        // Reintentar crear la sesión
+        result = await createSessionGoogleDrive(
+          exp_data.driveFolderId,
+          tokenResult.access_token,
+          experimentID,
+          sessionId
+        );
+        console.log("Retry Google Drive creation result:", result);
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: "Error creating folder and retrying session",
+          error: err.message,
+        });
+        return;
+      }
+    }
 
     if (!result.success) {
       if (result.errorCode === 409) {
@@ -487,7 +513,7 @@ export async function finalizeSession(experimentID, sessionId) {
 
 // Cloud Function para finalizar sesiones desconectadas automáticamente
 // Se dispara cuando se actualiza un nodo en /sessions/{experimentID}/{sessionId}
-export const finalizeDisconnectedSessions = onValueWritten(
+export const finalizeDisconnectedSessionsDrive = onValueWritten(
   {
     ref: "/sessions/{experimentID}/{sessionId}",
     region: "us-central1",

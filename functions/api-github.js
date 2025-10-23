@@ -602,7 +602,7 @@ export const githubUpdateHtml = onRequest({ cors: true }, async (req, res) => {
 
     // Paso 1: Actualizar el archivo index.html
     console.log("Updating index.html...");
-    const uploadHtmlResult = await uploadFileGithub(
+    let uploadHtmlResult = await uploadFileGithub(
       accessToken,
       owner,
       repoName,
@@ -610,6 +610,34 @@ export const githubUpdateHtml = onRequest({ cors: true }, async (req, res) => {
       htmlContent,
       "Update experiment HTML"
     );
+
+    // Si error 404, intentar crear el repo y reintentar
+    if (!uploadHtmlResult.success && uploadHtmlResult.errorCode === 404) {
+      try {
+        const { ensureResourcesExist } = await import("./ensure-resources.js");
+        await ensureResourcesExist({
+          githubToken: accessToken,
+          repoName: repoName,
+          githubOwner: owner,
+        });
+        // Reintentar subir el archivo
+        uploadHtmlResult = await uploadFileGithub(
+          accessToken,
+          owner,
+          repoName,
+          "index.html",
+          htmlContent,
+          "Update experiment HTML"
+        );
+        console.log("Retry upload index.html result:", uploadHtmlResult);
+      } catch (err) {
+        return res.status(500).json({
+          success: false,
+          message: "Error creating repo and retrying upload",
+          error: err.message,
+        });
+      }
+    }
 
     if (!uploadHtmlResult.success) {
       return res.status(400).json({

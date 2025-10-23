@@ -23,7 +23,7 @@ export const apiCreateExperiment = onRequest(
 
     try {
       // Crear la ruta de la carpeta en Google Drive usando el nombre del experimento
-      const folderPath = `/DataPipe/${experimentName}`;
+      const folderPath = `/ExpBuilder/${experimentName}`;
 
       // Obtener el token de Google Drive del usuario si se proporciona uid
       let driveFolderCreated = false;
