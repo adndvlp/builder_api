@@ -7,14 +7,6 @@ const MESSAGES = {
     error: "DATA_COLLECTION_NOT_ACTIVE",
     message: "Data collection is not active for this experiment",
   },
-  BASE64DATA_COLLECTION_NOT_ACTIVE: {
-    error: "BASE64DATA_COLLECTION_NOT_ACTIVE",
-    message: "Base64 data collection is not active for this experiment",
-  },
-  CONDITION_ASSIGNMENT_NOT_ACTIVE: {
-    error: "CONDITION_ASSIGNMENT_NOT_ACTIVE",
-    message: "Condition assignment is not active for this experiment",
-  },
   EXPERIMENT_NOT_FOUND: {
     error: "EXPERIMENT_NOT_FOUND",
     message: "The experiment ID does not match an experiment",
@@ -35,10 +27,6 @@ const MESSAGES = {
     error: "INVALID_GOOGLE_DRIVE_TOKEN",
     message: "The Google Drive token for this experiment is not valid",
   },
-  INVALID_BASE64_DATA: {
-    error: "INVALID_BASE64_DATA",
-    message: "The data are not valid base64 data",
-  },
   INVALID_DATA: {
     error: "INVALID_DATA",
     message:
@@ -47,19 +35,6 @@ const MESSAGES = {
   SESSION_LIMIT_REACHED: {
     error: "SESSION_LIMIT_REACHED",
     message: "The session limit for this experiment has been reached",
-  },
-  UNKNOWN_ERROR_GETTING_CONDITION: {
-    error: "UNKNOWN_ERROR_GETTING_CONDITION",
-    message:
-      "An unknown error occurred while getting the condition for this experiment",
-  },
-  OSF_FILE_EXISTS: {
-    error: "OSF_FILE_EXISTS",
-    message: "The OSF file already exists. File names must be unique.",
-  },
-  OSF_UPLOAD_ERROR: {
-    error: "OSF_UPLOAD_ERROR",
-    message: "An error occurred while uploading the data to OSF",
   },
   DROPBOX_FILE_EXISTS: {
     error: "DROPBOX_FILE_EXISTS",
