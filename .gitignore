@@ -145,5 +145,8 @@ osf-token-info.txt
 .firebase
 .idea/
 .emulator-data
+emulator-backup
+.env.local
+env_local.txt
 
 testServiceAccount.json
