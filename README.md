@@ -20,7 +20,6 @@ Builder_api is a Firebase project using serverless functions to authenticate use
 3. **Configure Firebase:**
 
    - Create a Firebase project at https://console.firebase.google.com/
-   - Download your service account key and place it in the project directory (e.g., `serviceAccountKey.json`).
    - Create an environment file (e.g., `.env`) with your required variables (Firebase credentials, API keys, etc.).
 
 4. **Deploy or run locally:**
