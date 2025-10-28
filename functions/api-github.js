@@ -555,7 +555,7 @@ export const githubUpdateHtml = onRequest({ cors: true }, async (req, res) => {
   }
 
   try {
-    const { uid, repoName, htmlContent, envContent } = req.body;
+    const { uid, repoName, htmlContent, envContent, mediaFiles } = req.body;
 
     // Validar parámetros requeridos
     if (!uid || !repoName || !htmlContent) {
@@ -649,7 +649,43 @@ export const githubUpdateHtml = onRequest({ cors: true }, async (req, res) => {
 
     console.log("HTML file updated successfully");
 
-    // Paso 2: Actualizar el archivo .env si se proporciona
+    // Paso 2: Subir archivos multimedia si se proporcionan
+    if (mediaFiles && Array.isArray(mediaFiles)) {
+      for (const file of mediaFiles) {
+        // file: { type: 'img'|'vid'|'aud', filename: string, content: base64|string }
+        if (!file.type || !file.filename || !file.content) continue;
+        let folder = "";
+        if (file.type === "img") folder = "img";
+        else if (file.type === "vid") folder = "vid";
+        else if (file.type === "aud") folder = "aud";
+        else continue;
+        const filePath = `${repoName}/${folder}/${file.filename}`;
+        // Si el contenido es base64, decodificarlo
+        let fileContent = file.content;
+        // Si el contenido es base64, convertir a buffer
+        if (/^([A-Za-z0-9+/=]+)$/.test(fileContent)) {
+          fileContent = Buffer.from(fileContent, "base64");
+        }
+        const uploadResult = await uploadFileGithub(
+          accessToken,
+          owner,
+          repoName,
+          filePath,
+          fileContent,
+          `Upload ${file.type} file: ${file.filename}`
+        );
+        if (!uploadResult.success) {
+          console.warn(
+            `Error uploading media file ${file.filename}:`,
+            uploadResult.errorText
+          );
+        } else {
+          console.log(`Media file uploaded: ${filePath}`);
+        }
+      }
+    }
+
+    // Paso 3: Actualizar el archivo .env si se proporciona
     if (envContent) {
       console.log("Updating .env file...");
       const uploadEnvResult = await uploadFileGithub(
@@ -672,7 +708,7 @@ export const githubUpdateHtml = onRequest({ cors: true }, async (req, res) => {
       }
     }
 
-    // Paso 3: Verificar que GitHub Pages esté habilitado
+    // Paso 4: Verificar que GitHub Pages esté habilitado
     console.log("Ensuring GitHub Pages is enabled...");
     const enablePagesResult = await enableGithubPages(
       accessToken,
@@ -698,7 +734,7 @@ export const githubUpdateHtml = onRequest({ cors: true }, async (req, res) => {
     // Retornar el resultado exitoso
     return res.status(200).json({
       success: true,
-      message: "Repository HTML updated successfully",
+      message: "Repository HTML and media updated successfully",
       repoUrl: `https://github.com/${owner}/${repoName}`,
       pagesUrl: pagesUrl,
       owner: owner,
