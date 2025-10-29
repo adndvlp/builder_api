@@ -363,39 +363,7 @@ export async function appendResultGoogleDrive(
 
   const fileId = searchData.files[0].id;
 
-  // Descargar el archivo CSV existente
-  const downloadResult = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${driveToken}`,
-      },
-    }
-  );
-
-  if (!downloadResult.ok) {
-    return {
-      success: false,
-      errorText: "Error downloading file",
-      errorCode: downloadResult.status,
-    };
-  }
-
-  let existingCSV = await downloadResult.text();
-
-  // Si el archivo está vacío, la primera línea CSV será el encabezado
-  // Si ya tiene contenido, agregamos una nueva línea
-  let updatedCSV;
-  if (existingCSV.trim() === "") {
-    // Primer registro: csvRow ya incluye el encabezado
-    updatedCSV = csvRow;
-  } else {
-    // Registros subsecuentes: agregar nueva línea
-    updatedCSV = existingCSV + "\n" + csvRow;
-  }
-
-  // Actualizar el archivo en Drive
+  // Actualizar el archivo en Drive con el CSV final recibido (sobrescribir)
   const uploadResult = await fetch(
     `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
     {
@@ -404,7 +372,7 @@ export async function appendResultGoogleDrive(
         Authorization: `Bearer ${driveToken}`,
         "Content-Type": "text/csv",
       },
-      body: updatedCSV,
+      body: csvRow, // Aquí csvRow es el CSV final (cabecera + datos)
     }
   );
 

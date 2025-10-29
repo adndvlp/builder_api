@@ -15,6 +15,7 @@ import writeLog from "./write-log.js";
 import MESSAGES from "./api-messages.js";
 import getValidDropboxToken from "./refresh-dropbox-token.js";
 import { createExperimentDropbox } from "./api-create-experiment-dropbox.js";
+import { Parser } from "json2csv";
 
 export const apiData = onRequest({ cors: true }, async (req, res) => {
   const { experimentID, sessionId, data, filename, action } = req.body;
@@ -328,52 +329,7 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
       return;
     }
 
-    // Si el experimento acepta CSV, validar y guardar el string CSV directamente
-    if (exp_data.allowCSV) {
-      // Validar CSV si está configurado
-      if (exp_data.useValidation) {
-        const valid = validateCSV(data, exp_data.requiredFields);
-        if (!valid) {
-          res.status(400).json(MESSAGES.INVALID_DATA);
-          return;
-        }
-      }
-
-      console.log("Appending CSV result to Firestore temporarily:", {
-        experimentID,
-        sessionId,
-      });
-
-      // Guardar el CSV como string en Firestore
-      const session_ref = db
-        .collection("experiments")
-        .doc(experimentID)
-        .collection("sessions")
-        .doc(sessionId);
-
-      const session_doc = await session_ref.get();
-
-      if (!session_doc.exists) {
-        await session_ref.set({
-          createdAt: FieldValue.serverTimestamp(),
-          results: [data],
-        });
-      } else {
-        await session_ref.update({
-          results: FieldValue.arrayUnion(data),
-        });
-      }
-
-      console.log("CSV result appended to Firestore successfully");
-
-      res.status(201).json({
-        success: true,
-        message: "CSV result appended successfully to temporary storage",
-      });
-      return;
-    }
-
-    // Si no es CSV, intentar parsear como JSON (flujo original)
+    // Siempre guardar como JSON
     let parsedData = data;
     if (typeof data === "string") {
       try {
@@ -508,29 +464,33 @@ export async function finalizeSessionDropbox(experimentID, sessionId) {
     );
   }
 
-  // Enviar todos los resultados a Dropbox
-  let failedCount = 0;
-  for (const result of results) {
-    const appendResult = await appendResultDropbox(
-      exp_data.dropboxFolder,
-      tokenResult.access_token,
-      experimentID,
-      sessionId,
-      result
-    );
-    if (!appendResult.success) {
-      failedCount++;
-      console.error("Failed to append result:", appendResult.errorText);
-    }
+  // Extraer todos los campos únicos de los resultados
+  const allFields = Array.from(
+    new Set(results.flatMap((row) => Object.keys(row)))
+  );
+  // Convertir a CSV con json2csv usando los campos detectados
+  const parser = new Parser({ fields: allFields });
+  let finalCSV;
+  try {
+    finalCSV = parser.parse(results);
+  } catch (err) {
+    throw new Error("Error converting results to CSV: " + err.message);
   }
 
-  if (failedCount > 0) {
+  // Subir el CSV final a Dropbox (sobrescribir)
+  const uploadResult = await appendResultDropbox(
+    exp_data.dropboxFolder,
+    tokenResult.access_token,
+    experimentID,
+    sessionId,
+    finalCSV,
+    true // overwrite mode
+  );
+  if (!uploadResult.success) {
     throw new Error(
-      `Failed to send ${failedCount} of ${results.length} results to Dropbox`
+      uploadResult.errorText || "Error uploading final CSV to Dropbox"
     );
   }
-
-  console.log("All results sent to Dropbox, cleaning up Firestore");
 
   // Limpiar los datos temporales de Firestore
   await session_ref.delete();
@@ -567,6 +527,14 @@ export const finalizeDisconnectedSessionsDropbox = onValueWritten(
 
     // SOLO procesar si needsFinalization está en true
     if (afterData.needsFinalization !== true) {
+      return null;
+    }
+    // SOLO procesar si storage es 'dropbox'
+    if (afterData.storage !== "dropbox") {
+      console.log(
+        "Skip finalization: storage is not dropbox",
+        afterData.storage
+      );
       return null;
     }
 

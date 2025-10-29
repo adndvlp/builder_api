@@ -21,6 +21,7 @@
     "firebase-functions": "^4.8.0",
     "is-base64": "^1.1.0",
     "joi": "^17.7.0",
+    "json2csv": "^6.0.0-alpha.2",
     "node-fetch": "^3.2.10"
   },
   "devDependencies": {

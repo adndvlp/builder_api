@@ -199,7 +199,6 @@ export const githubOAuthCallback = onRequest(async (req, res) => {
  * - uid: ID del usuario
  * - repoName: Nombre del repositorio
  * - htmlContent: Contenido del archivo HTML
- * - envContent: Contenido del archivo .env (opcional)
  * - isPrivate: Si el repositorio debe ser privado (default: false)
  * - description: Descripción del repositorio (opcional)
  */
@@ -220,7 +219,6 @@ export const githubCreateAndPublish = onRequest(
         uid,
         repoName,
         htmlContent,
-        envContent,
         isPrivate = false,
         description = "",
       } = req.body;
@@ -287,29 +285,6 @@ export const githubCreateAndPublish = onRequest(
       }
 
       console.log("HTML file uploaded successfully");
-
-      // Paso 3: Subir el archivo .env si se proporciona
-      if (envContent) {
-        console.log("Step 3: Uploading .env file...");
-        const uploadEnvResult = await uploadFileGithub(
-          accessToken,
-          owner,
-          createdRepoName,
-          ".env",
-          envContent,
-          "Add environment configuration"
-        );
-
-        if (!uploadEnvResult.success) {
-          console.warn(
-            "Warning: Error uploading .env file:",
-            uploadEnvResult.errorText
-          );
-          // No retornamos error, ya que el .env es opcional
-        } else {
-          console.log(".env file uploaded successfully");
-        }
-      }
 
       // Paso 4: Habilitar GitHub Pages
       console.log("Step 4: Enabling GitHub Pages...");
@@ -542,7 +517,6 @@ export const githubGetRepository = onRequest(
  * - uid: ID del usuario
  * - repoName: Nombre del repositorio
  * - htmlContent: Contenido del archivo HTML actualizado
- * - envContent: Contenido del archivo .env (opcional)
  */
 export const githubUpdateHtml = onRequest({ cors: true }, async (req, res) => {
   // Permitir CORS para desarrollo local
@@ -555,7 +529,7 @@ export const githubUpdateHtml = onRequest({ cors: true }, async (req, res) => {
   }
 
   try {
-    const { uid, repoName, htmlContent, envContent, mediaFiles } = req.body;
+    const { uid, repoName, htmlContent, mediaFiles } = req.body;
 
     // Validar parámetros requeridos
     if (!uid || !repoName || !htmlContent) {
@@ -682,29 +656,6 @@ export const githubUpdateHtml = onRequest({ cors: true }, async (req, res) => {
         } else {
           console.log(`Media file uploaded: ${filePath}`);
         }
-      }
-    }
-
-    // Paso 3: Actualizar el archivo .env si se proporciona
-    if (envContent) {
-      console.log("Updating .env file...");
-      const uploadEnvResult = await uploadFileGithub(
-        accessToken,
-        owner,
-        repoName,
-        ".env",
-        envContent,
-        "Update environment configuration"
-      );
-
-      if (!uploadEnvResult.success) {
-        console.warn(
-          "Warning: Error uploading .env file:",
-          uploadEnvResult.errorText
-        );
-        // No retornamos error, ya que el .env es opcional
-      } else {
-        console.log(".env file updated successfully");
       }
     }
 

@@ -91,46 +91,11 @@ export async function appendResultDropbox(
   dropboxToken,
   experimentID,
   sessionId,
-  csvRow
+  csvContent,
+  overwrite = false
 ) {
   const filePath = `${dropboxFolder}/${experimentID}_${sessionId}.csv`;
-
-  // Descargar el archivo CSV existente
-  const downloadResult = await fetch(
-    "https://content.dropboxapi.com/2/files/download",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${dropboxToken}`,
-        "Dropbox-API-Arg": JSON.stringify({
-          path: filePath,
-        }),
-      },
-    }
-  );
-
-  if (downloadResult.status !== 200) {
-    return {
-      success: false,
-      error: "Session not found",
-      errorCode: downloadResult.status,
-    };
-  }
-
-  let existingCSV = await downloadResult.text();
-
-  // Si el archivo está vacío, la primera línea CSV será el encabezado
-  // Si ya tiene contenido, agregamos una nueva línea
-  let updatedCSV;
-  if (existingCSV.trim() === "") {
-    // Primer registro: csvRow ya incluye el encabezado
-    updatedCSV = csvRow;
-  } else {
-    // Registros subsecuentes: agregar nueva línea
-    updatedCSV = existingCSV + "\n" + csvRow;
-  }
-
-  // Subir el archivo actualizado
+  // Subir el archivo CSV completo (sobrescribir siempre)
   const uploadResult = await fetch(
     "https://content.dropboxapi.com/2/files/upload",
     {
@@ -145,7 +110,7 @@ export async function appendResultDropbox(
         }),
         "Content-Type": "application/octet-stream",
       },
-      body: updatedCSV,
+      body: csvContent,
     }
   );
 

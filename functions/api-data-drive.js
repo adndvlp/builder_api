@@ -15,7 +15,7 @@ import postFileGoogleDrive, {
 } from "./crud-file-google-drive.js";
 import getValidGoogleDriveToken from "./refresh-google-drive-token.js";
 import { createExperimentGoogleDrive } from "./api-create-experiment-drive.js";
-
+import { Parser } from "json2csv";
 export const apiData = onRequest({ cors: true }, async (req, res) => {
   const { experimentID, sessionId, data, filename, action } = req.body;
 
@@ -323,52 +323,7 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
       return;
     }
 
-    // Si el experimento acepta CSV, validar y guardar el string CSV directamente
-    if (exp_data.allowCSV) {
-      // Validar CSV si está configurado
-      if (exp_data.useValidation) {
-        const valid = validateCSV(data, exp_data.requiredFields);
-        if (!valid) {
-          res.status(400).json(MESSAGES.INVALID_DATA);
-          return;
-        }
-      }
-
-      console.log("Appending CSV result to Firestore temporarily:", {
-        experimentID,
-        sessionId,
-      });
-
-      // Guardar el CSV como string en Firestore
-      const session_ref = db
-        .collection("experiments")
-        .doc(experimentID)
-        .collection("sessions")
-        .doc(sessionId);
-
-      const session_doc = await session_ref.get();
-
-      if (!session_doc.exists) {
-        await session_ref.set({
-          createdAt: FieldValue.serverTimestamp(),
-          results: [data],
-        });
-      } else {
-        await session_ref.update({
-          results: FieldValue.arrayUnion(data),
-        });
-      }
-
-      console.log("CSV result appended to Firestore successfully");
-
-      res.status(201).json({
-        success: true,
-        message: "CSV result appended successfully to temporary storage",
-      });
-      return;
-    }
-
-    // Si no es CSV, intentar parsear como JSON (flujo original)
+    // Siempre guardar como JSON
     let parsedData = data;
     if (typeof data === "string") {
       try {
@@ -484,7 +439,20 @@ export async function finalizeSession(experimentID, sessionId) {
     throw new Error("NO_RESULTS");
   }
 
-  console.log(`Sending ${results.length} results to Google Drive in batch`);
+  // Extraer todos los campos únicos de los resultados
+  const allFields = Array.from(
+    new Set(results.flatMap((row) => Object.keys(row)))
+  );
+  // Convertir a CSV con json2csv usando los campos detectados
+  const parser = new Parser({ fields: allFields });
+  let finalCsv;
+  try {
+    finalCsv = parser.parse(results);
+  } catch (err) {
+    throw new Error("Error converting results to CSV: " + err.message);
+  }
+
+  console.log(`Final CSV to send to Drive:\n${finalCsv}`);
 
   // Crear la sesión en Google Drive si no existe
   const createResult = await createSessionGoogleDrive(
@@ -501,21 +469,18 @@ export async function finalizeSession(experimentID, sessionId) {
     );
   }
 
-  // Enviar todos los resultados a Google Drive
+  // Enviar el CSV final a Google Drive (debes adaptar appendResultGoogleDrive para aceptar el CSV completo)
   let failedCount = 0;
-  for (const result of results) {
-    const appendResult = await appendResultGoogleDrive(
-      exp_data.driveFolderId,
-      tokenResult.access_token,
-      experimentID,
-      sessionId,
-      result
-    );
-
-    if (!appendResult.success) {
-      failedCount++;
-      console.error("Failed to append result:", appendResult.errorText);
-    }
+  const appendResult = await appendResultGoogleDrive(
+    exp_data.driveFolderId,
+    tokenResult.access_token,
+    experimentID,
+    sessionId,
+    finalCsv
+  );
+  if (!appendResult.success) {
+    failedCount++;
+    console.error("Failed to append result:", appendResult.errorText);
   }
 
   if (failedCount > 0) {
@@ -561,6 +526,11 @@ export const finalizeDisconnectedSessionsDrive = onValueWritten(
 
     // SOLO procesar si needsFinalization está en true
     if (afterData.needsFinalization !== true) {
+      return null;
+    }
+    // SOLO procesar si storage es 'drive'
+    if (afterData.storage !== "drive") {
+      console.log("Skip finalization: storage is not drive", afterData.storage);
       return null;
     }
 
