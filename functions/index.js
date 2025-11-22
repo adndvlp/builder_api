@@ -1,14 +1,8 @@
-import { apiDataHandler } from "./api-handler.js";
-import { finalizeDisconnectedSessionsDropbox } from "./api-data-dropbox.js";
-import { finalizeDisconnectedSessionsDrive } from "./api-data-drive.js";
+import { apiData, finalizeDisconnectedSessions } from "./routes/data.js";
+import { apiDeleteExperiment } from "./routes/experiments.js";
 import { dropboxOAuthCallback } from "./api-dropbox.js";
-import {
-  githubOAuthCallback,
-  githubCreateAndPublish,
-  githubDeleteRepository,
-  githubGetRepository,
-  githubUpdateHtml,
-} from "./api-github.js";
+import { githubOAuthCallback } from "./api-github.js";
+import { publishExperiment } from "./routes/github.js";
 import { googleDriveOAuthCallback } from "./api-google-drive.js";
 import { setGlobalOptions } from "firebase-functions/v2";
 
@@ -17,14 +11,11 @@ setGlobalOptions({
 });
 
 export {
-  apiDataHandler as apidata,
+  apiData,
+  apiDeleteExperiment,
+  finalizeDisconnectedSessions,
   dropboxOAuthCallback,
-  finalizeDisconnectedSessionsDrive,
-  finalizeDisconnectedSessionsDropbox,
   githubOAuthCallback,
-  githubCreateAndPublish,
-  githubDeleteRepository,
-  githubGetRepository,
-  githubUpdateHtml,
+  publishExperiment,
   googleDriveOAuthCallback,
 };

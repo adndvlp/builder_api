@@ -1,22 +1,26 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { onValueWritten } from "firebase-functions/v2/database";
 import { FieldValue } from "firebase-admin/firestore";
-import validateJSON from "./validate-json.js";
-import validateCSV from "./validate-csv.js";
-import postFileDropbox, {
-  createSessionDropbox,
-  appendResultDropbox,
-  listSessionsDropbox,
-  downloadSessionDropbox,
-  deleteSessionDropbox,
-} from "./crud-file-dropbox.js";
-import { db } from "./app.js";
-import writeLog from "./write-log.js";
-import MESSAGES from "./api-messages.js";
-import getValidDropboxToken from "./refresh-dropbox-token.js";
-import { createExperimentDropbox } from "./api-create-experiment-dropbox.js";
+import { db } from "../app.js";
+import writeLog from "../write-log.js";
+import MESSAGES from "../api-messages.js";
+import validateCSV from "../validate-csv.js";
+import validateJSON from "../validate-json.js";
 import { Parser } from "json2csv";
+import { getValidToken } from "../services/oauth.js";
+import {
+  createSession,
+  appendResult,
+  listSessions,
+  downloadSession,
+  deleteSession,
+  postFile,
+} from "../services/storage.js";
+import { createExperiment } from "./experiments.js";
 
+/**
+ * Endpoint HTTP principal para manejo de datos
+ */
 export const apiData = onRequest({ cors: true }, async (req, res) => {
   const { experimentID, sessionId, data, filename, action } = req.body;
 
@@ -35,33 +39,11 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
 
   if (action === "finish" && experimentID && sessionId) {
     try {
-      const result = await finalizeSessionDropbox(experimentID, sessionId);
+      const result = await finalizeSession(experimentID, sessionId);
       res.status(200).json(result);
     } catch (error) {
       console.error("Error in finish action:", error);
-
-      // Mapear errores a respuestas HTTP apropiadas
-      if (error.message === "EXPERIMENT_NOT_FOUND") {
-        res.status(400).json(MESSAGES.EXPERIMENT_NOT_FOUND);
-      } else if (error.message === "INVALID_DROPBOX_TOKEN") {
-        res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
-      } else if (error.message === "SESSION_NOT_FOUND") {
-        res.status(400).json({
-          success: false,
-          message: "Session not found in temporary storage",
-        });
-      } else if (error.message === "NO_RESULTS") {
-        res.status(400).json({
-          success: false,
-          message: "No results to send to Dropbox",
-        });
-      } else {
-        res.status(500).json({
-          success: false,
-          message: "Internal server error",
-          error: error.message,
-        });
-      }
+      handleFinalizationError(res, error);
     }
     return;
   }
@@ -82,6 +64,13 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
     return;
   }
 
+  await handlePostFile(req, res, experimentID, data, filename);
+});
+
+/**
+ * Función auxiliar para guardar archivo completo (legacy)
+ */
+async function handlePostFile(req, res, experimentID, data, filename) {
   await writeLog(experimentID, "saveData");
 
   const exp_doc_ref = db.collection("experiments").doc(experimentID);
@@ -100,7 +89,7 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
 
   if (exp_data.limitSessions) {
     if (exp_data.sessions >= exp_data.maxSessions) {
-      res.status(400).json(MESSAGES.SESSION_LIMIT_REACHED);
+      res.status(400).json(MESSAGES.MAX_SESSIONS_REACHED);
       return;
     }
   }
@@ -108,16 +97,10 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
   if (exp_data.useValidation) {
     let valid = false;
     if (exp_data.allowJSON) {
-      const validJSON = validateJSON(data, exp_data.requiredFields);
-      if (validJSON) {
-        valid = true;
-      }
+      valid = validateJSON(data, exp_data.requiredFields);
     }
     if (exp_data.allowCSV && !valid) {
-      const validCSV = validateCSV(data, exp_data.requiredFields);
-      if (validCSV) {
-        valid = true;
-      }
+      valid = validateCSV(data, exp_data.requiredFields);
     }
     if (!valid) {
       res.status(400).json(MESSAGES.INVALID_DATA);
@@ -125,36 +108,55 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
     }
   }
 
-  // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
-  const tokenResult = await getValidDropboxToken(exp_data.owner);
+  const storageProvider = exp_data.storageProvider || "googledrive";
+  const tokenResult = await getValidToken(storageProvider, exp_data.owner);
 
   if (!tokenResult.success) {
-    res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
+    res
+      .status(400)
+      .json(
+        storageProvider === "dropbox"
+          ? MESSAGES.INVALID_DROPBOX_TOKEN
+          : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN
+      );
     return;
   }
 
-  const result = await postFileDropbox(
-    exp_data.dropboxFolder,
+  const folderIdentifier =
+    storageProvider === "googledrive"
+      ? exp_data.driveFolderId
+      : exp_data.dropboxFolder;
+
+  const result = await postFile(
+    storageProvider,
     tokenResult.access_token,
+    folderIdentifier,
     data,
     filename
   );
 
   if (!result.success) {
-    if (result.errorCode === 409 && result.errorText === "Conflict") {
-      res.status(400).json(MESSAGES.DROPBOX_FILE_EXISTS);
+    if (result.errorCode === 409) {
+      res.status(409).json(MESSAGES.FILE_ALREADY_EXISTS);
       return;
     }
-    res.status(400).json(MESSAGES.DROPBOX_UPLOAD_ERROR);
+    res
+      .status(400)
+      .json(
+        storageProvider === "dropbox"
+          ? MESSAGES.DROPBOX_UPLOAD_ERROR
+          : MESSAGES.GOOGLE_DRIVE_UPLOAD_ERROR
+      );
     return;
   }
 
   await exp_doc_ref.set({ sessions: FieldValue.increment(1) }, { merge: true });
-
   res.status(201).json(MESSAGES.SUCCESS);
-});
+}
 
-// Función auxiliar para crear sesión
+/**
+ * Función auxiliar para crear sesión
+ */
 async function handleCreateSession(req, res, experimentID, sessionId) {
   try {
     await writeLog(experimentID, "createSession");
@@ -164,14 +166,21 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
 
     // Si no existe el experimento, créalo directamente aquí
     if (!exp_doc.exists) {
+      const storageProvider = req.body.storageProvider || "googledrive";
       await exp_doc_ref.set(
         {
           title: experimentID,
           owner: req.body.uid || "unknown",
           active: true,
           sessions: 0,
-          dropboxFolder: null,
-          // ...otros campos necesarios
+          storageProvider: storageProvider,
+          ...(storageProvider === "googledrive" && {
+            driveFolderId: null,
+            driveFolderPath: null,
+          }),
+          ...(storageProvider === "dropbox" && {
+            dropboxFolder: null,
+          }),
         },
         { merge: true }
       );
@@ -186,64 +195,109 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
 
     if (exp_data.limitSessions) {
       if (exp_data.sessions >= exp_data.maxSessions) {
-        res.status(400).json(MESSAGES.SESSION_LIMIT_REACHED);
+        res.status(400).json(MESSAGES.MAX_SESSIONS_REACHED);
         return;
       }
     }
 
-    // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
-    const tokenResult = await getValidDropboxToken(exp_data.owner);
+    const storageProvider = exp_data.storageProvider || "googledrive";
+    const tokenResult = await getValidToken(storageProvider, exp_data.owner);
 
     if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
+      res
+        .status(400)
+        .json(
+          storageProvider === "dropbox"
+            ? MESSAGES.INVALID_DROPBOX_TOKEN
+            : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN
+        );
       return;
     }
 
-    console.log("Creating session in Dropbox:", {
-      folder: exp_data.dropboxFolder,
+    let folderIdentifier =
+      storageProvider === "googledrive"
+        ? exp_data.driveFolderId
+        : exp_data.dropboxFolder;
+
+    // Si no hay folderIdentifier, crear la carpeta ahora
+    if (!folderIdentifier && exp_data.driveFolderPath) {
+      console.log(
+        `No folder ID found, creating folder at ${exp_data.driveFolderPath}`
+      );
+
+      const { createFolder } = await import("../services/storage.js");
+      const folderResult = await createFolder(
+        storageProvider,
+        tokenResult.access_token,
+        exp_data.driveFolderPath
+      );
+
+      if (folderResult.success && folderResult.folderId) {
+        folderIdentifier = folderResult.folderId;
+
+        // Actualizar el experimento con el folderId
+        await exp_doc_ref.update({
+          driveFolderId: folderIdentifier,
+        });
+
+        console.log(
+          `Folder created and experiment updated with folderId: ${folderIdentifier}`
+        );
+      } else {
+        console.error(`Failed to create folder:`, folderResult);
+      }
+    }
+
+    console.log(`Creating session in ${storageProvider}:`, {
+      folderIdentifier,
       experimentID,
       sessionId,
     });
 
-    // Crear la sesión en Dropbox
-    const result = await createSessionDropbox(
-      exp_data.dropboxFolder,
+    let result = await createSession(
+      storageProvider,
       tokenResult.access_token,
+      folderIdentifier,
       experimentID,
       sessionId
     );
 
-    console.log("Dropbox creation result:", result);
+    console.log(`${storageProvider} creation result:`, result);
 
-    // Si error 404 o 400, crear experimento completo usando la función dedicada
+    // Si error 404 o 400, crear experimento completo
     if (
       !result.success &&
       (result.errorCode === 404 || result.errorCode === 400)
     ) {
       try {
-        console.log("Creating experiment using createExperimentDropbox");
-
-        // Usar la función de creación de experimento para Dropbox
-        const createResult = await createExperimentDropbox(
-          experimentID,
-          experimentID, // Usar experimentID como nombre si no se proporciona
-          req.body.uid || "unknown"
+        console.log(
+          `Creating experiment using createExperiment for ${storageProvider}`
         );
 
-        console.log("Experiment creation result:", createResult);
+        await createExperiment(
+          experimentID,
+          experimentID,
+          req.body.uid || "unknown",
+          storageProvider
+        );
 
         // Obtener los datos actualizados del experimento
         const updated_exp_doc = await exp_doc_ref.get();
         const updated_exp_data = updated_exp_doc.data();
+        const updated_folderIdentifier =
+          storageProvider === "googledrive"
+            ? updated_exp_data.driveFolderId
+            : updated_exp_data.dropboxFolder;
 
         // Reintentar crear la sesión con los datos actualizados
-        result = await createSessionDropbox(
-          updated_exp_data.dropboxFolder,
+        result = await createSession(
+          storageProvider,
           tokenResult.access_token,
+          updated_folderIdentifier,
           experimentID,
           sessionId
         );
-        console.log("Retry Dropbox creation result:", result);
+        console.log(`Retry ${storageProvider} creation result:`, result);
       } catch (err) {
         console.error("Error creating experiment and retrying session:", err);
         res.status(500).json({
@@ -256,26 +310,29 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
     }
 
     if (!result.success) {
-      if (result.error === "Session already exists") {
+      if (
+        result.errorCode === 409 ||
+        result.error === "Session already exists"
+      ) {
         res.status(409).json({
           success: false,
           message: "Session already exists",
+          errorCode: 409,
         });
         return;
       }
-      console.error("Failed to create session in Dropbox:", result);
       res.status(400).json({
         success: false,
-        message: "Failed to create session",
-        error: result.errorText,
+        message: result.errorText || result.error || "Error creating session",
       });
       return;
     }
 
     // Calcular el número de participante listando todas las sesiones
-    const sessionsResult = await listSessionsDropbox(
-      exp_data.dropboxFolder,
+    const sessionsResult = await listSessions(
+      storageProvider,
       tokenResult.access_token,
+      folderIdentifier,
       experimentID
     );
 
@@ -310,7 +367,9 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
   }
 }
 
-// Función auxiliar para agregar resultado (ahora guarda en Firestore temporalmente)
+/**
+ * Función auxiliar para agregar resultado (guarda en Firestore temporalmente)
+ */
 async function handleAppendResult(req, res, experimentID, sessionId, data) {
   try {
     await writeLog(experimentID, "appendResult");
@@ -399,9 +458,12 @@ async function handleAppendResult(req, res, experimentID, sessionId, data) {
   }
 }
 
-// Función auxiliar INTERNA para finalizar sesión en Dropbox (lógica pura sin req/res)
-export async function finalizeSessionDropbox(experimentID, sessionId) {
-  await writeLog(experimentID, "finishSessionDropbox");
+/**
+ * Función auxiliar INTERNA para finalizar sesión (lógica pura sin req/res)
+ * Esta función puede ser llamada desde el endpoint HTTP o desde Cloud Functions
+ */
+export async function finalizeSession(experimentID, sessionId) {
+  await writeLog(experimentID, "finishSession");
 
   const exp_doc_ref = db.collection("experiments").doc(experimentID);
   const exp_doc = await exp_doc_ref.get();
@@ -411,12 +473,17 @@ export async function finalizeSessionDropbox(experimentID, sessionId) {
   }
 
   const exp_data = exp_doc.data();
+  const storageProvider = exp_data.storageProvider || "googledrive";
 
-  // Obtener token válido de Dropbox
-  const tokenResult = await getValidDropboxToken(exp_data.owner);
+  // Obtener token válido
+  const tokenResult = await getValidToken(storageProvider, exp_data.owner);
 
   if (!tokenResult.success) {
-    throw new Error("INVALID_DROPBOX_TOKEN");
+    throw new Error(
+      storageProvider === "dropbox"
+        ? "INVALID_DROPBOX_TOKEN"
+        : "INVALID_GOOGLE_DRIVE_TOKEN"
+    );
   }
 
   console.log("Finishing session - fetching results from Firestore:", {
@@ -444,12 +511,32 @@ export async function finalizeSessionDropbox(experimentID, sessionId) {
     throw new Error("NO_RESULTS");
   }
 
-  console.log(`Sending ${results.length} results to Dropbox in batch`);
+  // Extraer todos los campos únicos de los resultados
+  const allFields = Array.from(
+    new Set(results.flatMap((row) => Object.keys(row)))
+  );
 
-  // Crear la sesión en Dropbox si no existe
-  const createResult = await createSessionDropbox(
-    exp_data.dropboxFolder,
+  // Convertir a CSV con json2csv usando los campos detectados
+  const parser = new Parser({ fields: allFields });
+  let finalCsv;
+  try {
+    finalCsv = parser.parse(results);
+  } catch (err) {
+    throw new Error("Error converting results to CSV: " + err.message);
+  }
+
+  console.log(`Final CSV to send to ${storageProvider}:\n${finalCsv}`);
+
+  const folderIdentifier =
+    storageProvider === "googledrive"
+      ? exp_data.driveFolderId
+      : exp_data.dropboxFolder;
+
+  // Crear la sesión si no existe
+  const createResult = await createSession(
+    storageProvider,
     tokenResult.access_token,
+    folderIdentifier,
     experimentID,
     sessionId
   );
@@ -457,40 +544,33 @@ export async function finalizeSessionDropbox(experimentID, sessionId) {
   // Si la sesión ya existe (409), continuamos de todas formas
   if (
     !createResult.success &&
+    createResult.errorCode !== 409 &&
     createResult.error !== "Session already exists"
   ) {
     throw new Error(
-      createResult.errorText || "Error creating session in Dropbox"
+      createResult.errorText ||
+        createResult.error ||
+        `Error creating session in ${storageProvider}`
     );
   }
 
-  // Extraer todos los campos únicos de los resultados
-  const allFields = Array.from(
-    new Set(results.flatMap((row) => Object.keys(row)))
-  );
-  // Convertir a CSV con json2csv usando los campos detectados
-  const parser = new Parser({ fields: allFields });
-  let finalCSV;
-  try {
-    finalCSV = parser.parse(results);
-  } catch (err) {
-    throw new Error("Error converting results to CSV: " + err.message);
-  }
-
-  // Subir el CSV final a Dropbox (sobrescribir)
-  const uploadResult = await appendResultDropbox(
-    exp_data.dropboxFolder,
+  // Enviar el CSV final al storage
+  const appendResult_ = await appendResult(
+    storageProvider,
     tokenResult.access_token,
+    folderIdentifier,
     experimentID,
     sessionId,
-    finalCSV,
-    true // overwrite mode
+    finalCsv
   );
-  if (!uploadResult.success) {
+
+  if (!appendResult_.success) {
     throw new Error(
-      uploadResult.errorText || "Error uploading final CSV to Dropbox"
+      appendResult_.errorText || `Failed to send results to ${storageProvider}`
     );
   }
+
+  console.log(`All results sent to ${storageProvider}, cleaning up Firestore`);
 
   // Limpiar los datos temporales de Firestore
   await session_ref.delete();
@@ -504,9 +584,11 @@ export async function finalizeSessionDropbox(experimentID, sessionId) {
   };
 }
 
-// Cloud Function para finalizar sesiones desconectadas automáticamente en Dropbox
-// Se dispara cuando se actualiza un nodo en /sessions/{experimentID}/{sessionId}
-export const finalizeDisconnectedSessionsDropbox = onValueWritten(
+/**
+ * Cloud Function para finalizar sesiones desconectadas automáticamente
+ * Se dispara cuando se actualiza un nodo en /sessions/{experimentID}/{sessionId}
+ */
+export const finalizeDisconnectedSessions = onValueWritten(
   {
     ref: "/sessions/{experimentID}/{sessionId}",
     region: "us-central1",
@@ -527,14 +609,6 @@ export const finalizeDisconnectedSessionsDropbox = onValueWritten(
 
     // SOLO procesar si needsFinalization está en true
     if (afterData.needsFinalization !== true) {
-      return null;
-    }
-    // SOLO procesar si storage es 'dropbox'
-    if (afterData.storage !== "dropbox") {
-      console.log(
-        "Skip finalization: storage is not dropbox",
-        afterData.storage
-      );
       return null;
     }
 
@@ -559,8 +633,8 @@ export const finalizeDisconnectedSessionsDropbox = onValueWritten(
     );
 
     try {
-      // Usar la función unificada
-      const result = await finalizeSessionDropbox(experimentID, sessionId);
+      // Usar la función unificada que determina el storage provider automáticamente
+      const result = await finalizeSession(experimentID, sessionId);
 
       // Marcar como procesado en Realtime Database
       await event.data.after.ref.update({
@@ -591,7 +665,9 @@ export const finalizeDisconnectedSessionsDropbox = onValueWritten(
   }
 );
 
-// Función auxiliar para listar sesiones
+/**
+ * Función auxiliar para listar sesiones
+ */
 async function handleListSessions(req, res, experimentID) {
   try {
     await writeLog(experimentID, "listSessions");
@@ -605,45 +681,51 @@ async function handleListSessions(req, res, experimentID) {
     }
 
     const exp_data = exp_doc.data();
+    const storageProvider = exp_data.storageProvider || "googledrive";
 
-    // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
-    const tokenResult = await getValidDropboxToken(exp_data.owner);
+    const tokenResult = await getValidToken(storageProvider, exp_data.owner);
 
     if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
+      res
+        .status(400)
+        .json(
+          storageProvider === "dropbox"
+            ? MESSAGES.INVALID_DROPBOX_TOKEN
+            : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN
+        );
       return;
     }
 
-    console.log("Listing sessions from Dropbox:", {
-      folder: exp_data.dropboxFolder,
+    const folderIdentifier =
+      storageProvider === "googledrive"
+        ? exp_data.driveFolderId
+        : exp_data.dropboxFolder;
+
+    console.log(`Listing sessions from ${storageProvider}:`, {
+      folderIdentifier,
       experimentID,
     });
 
-    // Listar las sesiones desde Dropbox
-    const result = await listSessionsDropbox(
-      exp_data.dropboxFolder,
+    const result = await listSessions(
+      storageProvider,
       tokenResult.access_token,
+      folderIdentifier,
       experimentID
     );
 
-    console.log("List sessions result:", result);
+    console.log(`${storageProvider} list result:`, result);
 
     if (!result.success) {
-      console.error("Failed to list sessions:", result);
       res.status(400).json({
         success: false,
-        message: "Failed to list sessions",
-        error: result.errorText,
+        message: result.errorText || "Error listing sessions",
       });
       return;
     }
 
-    console.log(`Found ${result.sessions.length} sessions`);
-
     res.status(200).json({
       success: true,
       sessions: result.sessions,
-      count: result.sessions.length,
     });
   } catch (error) {
     console.error("Error in handleListSessions:", error);
@@ -655,7 +737,9 @@ async function handleListSessions(req, res, experimentID) {
   }
 }
 
-// Función auxiliar para descargar sesión como CSV
+/**
+ * Función auxiliar para descargar sesión como CSV
+ */
 async function handleDownloadSession(req, res, experimentID, sessionId) {
   try {
     await writeLog(experimentID, "downloadSession");
@@ -669,51 +753,52 @@ async function handleDownloadSession(req, res, experimentID, sessionId) {
     }
 
     const exp_data = exp_doc.data();
+    const storageProvider = exp_data.storageProvider || "googledrive";
 
-    // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
-    const tokenResult = await getValidDropboxToken(exp_data.owner);
+    const tokenResult = await getValidToken(storageProvider, exp_data.owner);
 
     if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
+      res
+        .status(400)
+        .json(
+          storageProvider === "dropbox"
+            ? MESSAGES.INVALID_DROPBOX_TOKEN
+            : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN
+        );
       return;
     }
 
-    console.log("Downloading session from Dropbox:", {
-      folder: exp_data.dropboxFolder,
+    const folderIdentifier =
+      storageProvider === "googledrive"
+        ? exp_data.driveFolderId
+        : exp_data.dropboxFolder;
+
+    console.log(`Downloading session from ${storageProvider}:`, {
+      folderIdentifier,
       experimentID,
       sessionId,
     });
 
-    // Descargar la sesión desde Dropbox
-    const result = await downloadSessionDropbox(
-      exp_data.dropboxFolder,
+    const result = await downloadSession(
+      storageProvider,
       tokenResult.access_token,
+      folderIdentifier,
       experimentID,
       sessionId
     );
 
-    console.log("Download session result:", result);
+    console.log(`${storageProvider} download result:`, result);
 
     if (!result.success) {
-      if (result.error === "Session not found") {
-        res.status(404).json({
-          success: false,
-          message: "Session not found",
-        });
-        return;
-      }
-      console.error("Failed to download session:", result);
       res.status(400).json({
         success: false,
-        message: "Failed to download session",
-        error: result.error,
+        message:
+          result.errorText || result.error || "Error downloading session",
       });
       return;
     }
 
-    console.log("Session downloaded successfully:", sessionId);
-
-    // Enviar el CSV como respuesta (igual que Drive)
+    // Enviar el CSV como respuesta
     res.setHeader("Content-Type", "text/csv");
     res.setHeader(
       "Content-Disposition",
@@ -730,7 +815,9 @@ async function handleDownloadSession(req, res, experimentID, sessionId) {
   }
 }
 
-// Función auxiliar para eliminar sesión
+/**
+ * Función auxiliar para eliminar sesión
+ */
 async function handleDeleteSession(req, res, experimentID, sessionId) {
   try {
     await writeLog(experimentID, "deleteSession");
@@ -744,48 +831,55 @@ async function handleDeleteSession(req, res, experimentID, sessionId) {
     }
 
     const exp_data = exp_doc.data();
+    const storageProvider = exp_data.storageProvider || "googledrive";
 
-    // Obtener token válido de Dropbox (refresca automáticamente si es necesario)
-    const tokenResult = await getValidDropboxToken(exp_data.owner);
+    const tokenResult = await getValidToken(storageProvider, exp_data.owner);
 
     if (!tokenResult.success) {
-      res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
+      res
+        .status(400)
+        .json(
+          storageProvider === "dropbox"
+            ? MESSAGES.INVALID_DROPBOX_TOKEN
+            : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN
+        );
       return;
     }
 
-    console.log("Deleting session from Dropbox:", {
-      folder: exp_data.dropboxFolder,
+    const folderIdentifier =
+      storageProvider === "googledrive"
+        ? exp_data.driveFolderId
+        : exp_data.dropboxFolder;
+
+    console.log(`Deleting session from ${storageProvider}:`, {
+      folderIdentifier,
       experimentID,
       sessionId,
     });
 
-    // Eliminar la sesión desde Dropbox
-    const result = await deleteSessionDropbox(
-      exp_data.dropboxFolder,
+    const result = await deleteSession(
+      storageProvider,
       tokenResult.access_token,
+      folderIdentifier,
       experimentID,
       sessionId
     );
 
-    console.log("Delete session result:", result);
+    console.log(`${storageProvider} delete result:`, result);
 
     if (!result.success) {
-      console.error("Failed to delete session:", result);
       res.status(400).json({
         success: false,
-        message: "Failed to delete session",
-        error: result.errorText,
+        message: result.errorText || "Error deleting session",
       });
       return;
     }
 
-    // Decrementar contador de sesiones en Firestore
+    // Decrementar el contador de sesiones en Firestore
     await exp_doc_ref.set(
       { sessions: FieldValue.increment(-1) },
       { merge: true }
     );
-
-    console.log("Session deleted successfully:", sessionId);
 
     res.status(200).json({
       success: true,
@@ -793,6 +887,35 @@ async function handleDeleteSession(req, res, experimentID, sessionId) {
     });
   } catch (error) {
     console.error("Error in handleDeleteSession:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+}
+
+/**
+ * Función auxiliar para manejar errores de finalización
+ */
+function handleFinalizationError(res, error) {
+  if (error.message === "EXPERIMENT_NOT_FOUND") {
+    res.status(400).json(MESSAGES.EXPERIMENT_NOT_FOUND);
+  } else if (error.message === "INVALID_GOOGLE_DRIVE_TOKEN") {
+    res.status(400).json(MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN);
+  } else if (error.message === "INVALID_DROPBOX_TOKEN") {
+    res.status(400).json(MESSAGES.INVALID_DROPBOX_TOKEN);
+  } else if (error.message === "SESSION_NOT_FOUND") {
+    res.status(400).json({
+      success: false,
+      message: "Session not found in temporary storage",
+    });
+  } else if (error.message === "NO_RESULTS") {
+    res.status(400).json({
+      success: false,
+      message: "No results to send to storage",
+    });
+  } else {
     res.status(500).json({
       success: false,
       message: "Internal server error",

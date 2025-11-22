@@ -1,4 +1,4 @@
-import { createFolderGoogleDrive } from "./crud-file-google-drive.js";
+import { createFolder } from "./services/storage.js";
 import {
   createRepositoryGithub,
   getRepositoryInfo,
@@ -30,7 +30,11 @@ export async function ensureResourcesExist({
 
   // Google Drive: intentar crear solo si no existe
   try {
-    const folderResult = await createFolderGoogleDrive(driveToken, folderPath);
+    const folderResult = await createFolder(
+      "googledrive",
+      driveToken,
+      folderPath
+    );
     if (folderResult.success) {
       driveFolderCreated = !folderResult.message?.includes("already exists");
       driveFolderId = folderResult.folderId;
