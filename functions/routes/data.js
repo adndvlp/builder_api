@@ -491,6 +491,23 @@ export async function finalizeSession(experimentID, sessionId) {
     sessionId,
   });
 
+  // Leer el estado desde Firebase Realtime Database
+  let sessionState = null;
+  try {
+    const rtdb = admin.database();
+    const sessionSnapshot = await rtdb
+      .ref(`sessions/${experimentID}/${sessionId}`)
+      .once("value");
+    const sessionData = sessionSnapshot.val();
+    if (sessionData && sessionData.state) {
+      sessionState = sessionData.state;
+      console.log(`Session state from Realtime DB: ${sessionState}`);
+    }
+  } catch (error) {
+    console.error("Error reading state from Realtime Database:", error);
+    // Continuar sin estado si hay error
+  }
+
   // Obtener todos los resultados de Firestore
   const session_ref = db
     .collection("experiments")
@@ -624,15 +641,36 @@ export const finalizeDisconnectedSessions = onValueWritten(
 
     const experimentID = event.params.experimentID;
     const sessionId = event.params.sessionId;
+    const isAbandoned = afterData.state === "abandoned";
 
     console.log(
       `Processing session finalization: ${experimentID}/${sessionId}`,
       `finished: ${
         afterData.finished || false
-      }, disconnected: ${!afterData.connected}`
+      }, disconnected: ${!afterData.connected}, state: ${
+        afterData.state || "unknown"
+      }`
     );
 
     try {
+      // Si fue abandonado, guardar estado en db.json local
+      if (isAbandoned && afterData.metadata) {
+        // Llamar endpoint para persistir metadata con estado abandoned
+        const https = await import("https");
+        const postData = JSON.stringify({
+          sessionId: sessionId,
+          metadata: afterData.metadata,
+          state: "abandoned",
+        });
+
+        // Este endpoint debe estar accesible desde Cloud Functions
+        // Por ahora solo lo registramos en logs
+        console.log(
+          `Session ${sessionId} marked as abandoned with metadata:`,
+          afterData.metadata
+        );
+      }
+
       // Usar la función unificada que determina el storage provider automáticamente
       const result = await finalizeSession(experimentID, sessionId);
 
