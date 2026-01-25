@@ -1,6 +1,7 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { onValueWritten } from "firebase-functions/v2/database";
 import { FieldValue } from "firebase-admin/firestore";
+import * as admin from "firebase-admin";
 import { db } from "../app.js";
 import writeLog from "../write-log.js";
 import MESSAGES from "../api-messages.js";
@@ -117,6 +118,8 @@ async function handlePostFile(req, res, experimentID, data, filename) {
       .json(
         storageProvider === "dropbox"
           ? MESSAGES.INVALID_DROPBOX_TOKEN
+          : storageProvider === "osf"
+          ? MESSAGES.INVALID_OSF_TOKEN
           : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN
       );
     return;
@@ -125,7 +128,9 @@ async function handlePostFile(req, res, experimentID, data, filename) {
   const folderIdentifier =
     storageProvider === "googledrive"
       ? exp_data.driveFolderId
-      : exp_data.dropboxFolder;
+      : storageProvider === "dropbox"
+      ? exp_data.dropboxFolder
+      : exp_data.osfUploadLink;
 
   const result = await postFile(
     storageProvider,
@@ -181,6 +186,10 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
           ...(storageProvider === "dropbox" && {
             dropboxFolder: null,
           }),
+          ...(storageProvider === "osf" && {
+            osfComponentId: null,
+            osfUploadLink: null,
+          }),
         },
         { merge: true }
       );
@@ -209,6 +218,8 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
         .json(
           storageProvider === "dropbox"
             ? MESSAGES.INVALID_DROPBOX_TOKEN
+            : storageProvider === "osf"
+            ? MESSAGES.INVALID_OSF_TOKEN
             : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN
         );
       return;
@@ -217,7 +228,9 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
     let folderIdentifier =
       storageProvider === "googledrive"
         ? exp_data.driveFolderId
-        : exp_data.dropboxFolder;
+        : storageProvider === "dropbox"
+        ? exp_data.dropboxFolder
+        : exp_data.osfUploadLink;
 
     // Si no hay folderIdentifier, crear la carpeta ahora
     if (!folderIdentifier && exp_data.driveFolderPath) {
@@ -226,19 +239,35 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
       );
 
       const { createFolder } = await import("../services/storage.js");
+
+      // Para OSF, necesitamos el projectId del usuario
+      let projectPath = exp_data.driveFolderPath;
+      if (storageProvider === "osf") {
+        const userDoc = await db.collection("users").doc(exp_data.owner).get();
+        const userData = userDoc.data();
+        projectPath = userData.osfProjectId;
+      }
+
       const folderResult = await createFolder(
         storageProvider,
         tokenResult.access_token,
-        exp_data.driveFolderPath
+        projectPath,
+        experimentID // componentName para OSF
       );
 
-      if (folderResult.success && folderResult.folderId) {
-        folderIdentifier = folderResult.folderId;
-
-        // Actualizar el experimento con el folderId
-        await exp_doc_ref.update({
-          driveFolderId: folderIdentifier,
-        });
+      if (folderResult.success) {
+        if (storageProvider === "googledrive" && folderResult.folderId) {
+          folderIdentifier = folderResult.folderId;
+          await exp_doc_ref.update({
+            driveFolderId: folderIdentifier,
+          });
+        } else if (storageProvider === "osf" && folderResult.componentId) {
+          folderIdentifier = folderResult.uploadLink;
+          await exp_doc_ref.update({
+            osfComponentId: folderResult.componentId,
+            osfUploadLink: folderResult.uploadLink,
+          });
+        }
 
         console.log(
           `Folder created and experiment updated with folderId: ${folderIdentifier}`
@@ -254,13 +283,42 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
       sessionId,
     });
 
-    let result = await createSession(
-      storageProvider,
-      tokenResult.access_token,
-      folderIdentifier,
-      experimentID,
-      sessionId
-    );
+    let result;
+    let participantNumber = 1;
+
+    // Para OSF, NO crear archivo, solo contar sesiones existentes
+    if (storageProvider === "osf") {
+      console.log("OSF: Listing sessions to count participants (no file creation)");
+      
+      // folderIdentifier para OSF es el componentId, no el uploadLink
+      const componentId = exp_data.osfComponentId || folderIdentifier;
+      
+      const sessionsResult = await listSessions(
+        storageProvider,
+        tokenResult.access_token,
+        componentId,
+        experimentID
+      );
+
+      participantNumber = sessionsResult.success
+        ? sessionsResult.sessions.length + 1
+        : 1;
+
+      result = { 
+        success: true, 
+        message: "Session registered (OSF file will be created on finish)",
+        participantNumber 
+      };
+    } else {
+      // Para Google Drive y Dropbox, crear archivo normalmente
+      result = await createSession(
+        storageProvider,
+        tokenResult.access_token,
+        folderIdentifier,
+        experimentID,
+        sessionId
+      );
+    }
 
     console.log(`${storageProvider} creation result:`, result);
 
@@ -287,7 +345,9 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
         const updated_folderIdentifier =
           storageProvider === "googledrive"
             ? updated_exp_data.driveFolderId
-            : updated_exp_data.dropboxFolder;
+            : storageProvider === "dropbox"
+            ? updated_exp_data.dropboxFolder
+            : updated_exp_data.osfUploadLink;
 
         // Reintentar crear la sesión con los datos actualizados
         result = await createSession(
@@ -328,17 +388,19 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
       return;
     }
 
-    // Calcular el número de participante listando todas las sesiones
-    const sessionsResult = await listSessions(
-      storageProvider,
-      tokenResult.access_token,
-      folderIdentifier,
-      experimentID
-    );
+    // Calcular el número de participante (ya calculado para OSF arriba)
+    if (storageProvider !== "osf") {
+      const sessionsResult = await listSessions(
+        storageProvider,
+        tokenResult.access_token,
+        folderIdentifier,
+        experimentID
+      );
 
-    const participantNumber = sessionsResult.success
-      ? sessionsResult.sessions.length + 1
-      : 1;
+      participantNumber = sessionsResult.success
+        ? sessionsResult.sessions.length + 1
+        : 1;
+    }
 
     // Incrementar contador de sesiones en Firestore
     await exp_doc_ref.set(
@@ -528,26 +590,48 @@ export async function finalizeSession(experimentID, sessionId) {
     throw new Error("NO_RESULTS");
   }
 
-  // Extraer todos los campos únicos de los resultados
+  // Agregar metadata a cada fila (igual que en la app local)
+  const metadata = session_data.metadata || {};
+  const createdAt = session_data.createdAt || new Date().toISOString();
+
+  const dataWithMetadata = results.map((row) => ({
+    ...row,
+    // Agregar campos de metadata
+    session_browser: metadata.browser || "",
+    session_browser_version: metadata.browserVersion || "",
+    session_os: metadata.os || "",
+    session_screen_resolution: metadata.screenResolution || "",
+    session_language: metadata.language || "",
+    session_started_at: metadata.startedAt || "",
+    session_id: sessionId,
+    session_created_at: createdAt,
+    session_state: sessionState || session_data.state || "",
+  }));
+
+  // Extraer todos los campos únicos de los resultados (ahora incluye metadata)
   const allFields = Array.from(
-    new Set(results.flatMap((row) => Object.keys(row)))
+    new Set(dataWithMetadata.flatMap((row) => Object.keys(row)))
   );
 
   // Convertir a CSV con json2csv usando los campos detectados
   const parser = new Parser({ fields: allFields });
   let finalCsv;
   try {
-    finalCsv = parser.parse(results);
+    finalCsv = parser.parse(dataWithMetadata);
   } catch (err) {
     throw new Error("Error converting results to CSV: " + err.message);
   }
 
-  console.log(`Final CSV to send to ${storageProvider}:\n${finalCsv}`);
+  console.log(
+    `Final CSV to send to ${storageProvider} (with metadata):\n${finalCsv}`
+  );
 
   const folderIdentifier =
     storageProvider === "googledrive"
       ? exp_data.driveFolderId
-      : exp_data.dropboxFolder;
+      : storageProvider === "dropbox"
+      ? exp_data.dropboxFolder
+      : exp_data.osfUploadLink;
 
   // Crear la sesión si no existe
   const createResult = await createSession(
@@ -729,6 +813,8 @@ async function handleListSessions(req, res, experimentID) {
         .json(
           storageProvider === "dropbox"
             ? MESSAGES.INVALID_DROPBOX_TOKEN
+            : storageProvider === "osf"
+            ? MESSAGES.INVALID_OSF_TOKEN
             : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN
         );
       return;
@@ -737,7 +823,9 @@ async function handleListSessions(req, res, experimentID) {
     const folderIdentifier =
       storageProvider === "googledrive"
         ? exp_data.driveFolderId
-        : exp_data.dropboxFolder;
+        : storageProvider === "dropbox"
+        ? exp_data.dropboxFolder
+        : exp_data.osfUploadLink;
 
     console.log(`Listing sessions from ${storageProvider}:`, {
       folderIdentifier,
@@ -801,6 +889,8 @@ async function handleDownloadSession(req, res, experimentID, sessionId) {
         .json(
           storageProvider === "dropbox"
             ? MESSAGES.INVALID_DROPBOX_TOKEN
+            : storageProvider === "osf"
+            ? MESSAGES.INVALID_OSF_TOKEN
             : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN
         );
       return;
@@ -809,7 +899,9 @@ async function handleDownloadSession(req, res, experimentID, sessionId) {
     const folderIdentifier =
       storageProvider === "googledrive"
         ? exp_data.driveFolderId
-        : exp_data.dropboxFolder;
+        : storageProvider === "dropbox"
+        ? exp_data.dropboxFolder
+        : exp_data.osfUploadLink;
 
     console.log(`Downloading session from ${storageProvider}:`, {
       folderIdentifier,
@@ -879,6 +971,8 @@ async function handleDeleteSession(req, res, experimentID, sessionId) {
         .json(
           storageProvider === "dropbox"
             ? MESSAGES.INVALID_DROPBOX_TOKEN
+            : storageProvider === "osf"
+            ? MESSAGES.INVALID_OSF_TOKEN
             : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN
         );
       return;
@@ -887,7 +981,9 @@ async function handleDeleteSession(req, res, experimentID, sessionId) {
     const folderIdentifier =
       storageProvider === "googledrive"
         ? exp_data.driveFolderId
-        : exp_data.dropboxFolder;
+        : storageProvider === "dropbox"
+        ? exp_data.dropboxFolder
+        : exp_data.osfUploadLink;
 
     console.log(`Deleting session from ${storageProvider}:`, {
       folderIdentifier,

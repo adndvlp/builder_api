@@ -27,6 +27,7 @@ export async function createExperiment(
 
   let folderCreated = false;
   let folderId = null;
+  let uploadLink = null; // Para OSF
   let storageError = null;
 
   if (uid) {
@@ -34,15 +35,25 @@ export async function createExperiment(
       const tokenResult = await getValidToken(storageProvider, uid);
 
       if (tokenResult.success) {
+        // Para OSF, necesitamos el projectId del usuario
+        let projectPath = folderPath;
+        if (storageProvider === "osf") {
+          const userDoc = await db.collection("users").doc(uid).get();
+          const userData = userDoc.data();
+          projectPath = userData.osfProjectId || folderPath;
+        }
+
         const folderResult = await createFolder(
           storageProvider,
           tokenResult.access_token,
-          folderPath
+          projectPath,
+          experimentName // componentName para OSF
         );
 
         if (folderResult.success) {
           folderCreated = true;
-          folderId = folderResult.folderId; // Solo relevante para Google Drive
+          folderId = folderResult.folderId || folderResult.componentId; // Google Drive o OSF
+          uploadLink = folderResult.uploadLink; // Solo para OSF
         } else {
           storageError = folderResult.errorText;
         }
@@ -61,6 +72,9 @@ export async function createExperiment(
     providerFields.driveFolderId = folderId;
   } else if (storageProvider === "dropbox") {
     providerFields.dropboxFolder = folderPath;
+  } else if (storageProvider === "osf") {
+    providerFields.osfComponentId = folderId;
+    providerFields.osfUploadLink = uploadLink;
   }
 
   // Guardar experimento en Firestore

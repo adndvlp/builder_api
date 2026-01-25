@@ -83,6 +83,36 @@ async function refreshAccessToken(provider, refreshToken) {
  */
 export async function getValidToken(provider, uid) {
   try {
+    // Para OSF, solo necesitamos recuperar el token (no hay OAuth/refresh)
+    if (provider === "osf") {
+      const userRef = db.collection("users").doc(uid);
+      const userDoc = await userRef.get();
+
+      if (!userDoc.exists) {
+        console.error("User not found:", uid);
+        return {
+          success: false,
+          error: "User not found",
+        };
+      }
+
+      const userData = userDoc.data();
+
+      if (!userData.osfToken || !userData.osfTokenValid) {
+        console.error("User does not have valid OSF token");
+        return {
+          success: false,
+          error: "User has not connected OSF or token is invalid",
+        };
+      }
+
+      return {
+        success: true,
+        access_token: userData.osfToken,
+        wasRefreshed: false,
+      };
+    }
+
     // Obtener datos del usuario desde Firestore
     const userRef = db.collection("users").doc(uid);
     const userDoc = await userRef.get();
