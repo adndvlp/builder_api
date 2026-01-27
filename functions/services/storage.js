@@ -12,7 +12,7 @@ export async function createFolder(
   provider,
   token,
   folderPath,
-  componentName = "Data"
+  componentName = "Data",
 ) {
   try {
     if (provider === "dropbox") {
@@ -28,7 +28,7 @@ export async function createFolder(
             path: folderPath,
             autorename: false,
           }),
-        }
+        },
       );
 
       const result = await response.json();
@@ -64,12 +64,12 @@ export async function createFolder(
 
         const searchResponse = await fetch(
           `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-            searchQuery
+            searchQuery,
           )}`,
           {
             method: "GET",
             headers: { Authorization: `Bearer ${token}` },
-          }
+          },
         );
 
         const searchResult = await searchResponse.json();
@@ -95,7 +95,7 @@ export async function createFolder(
                 "Content-Type": "application/json",
               },
               body: JSON.stringify(metadata),
-            }
+            },
           );
 
           const createResult = await createResponse.json();
@@ -137,7 +137,7 @@ export async function createFolder(
               },
             },
           }),
-        }
+        },
       );
 
       if (!createResponse.ok) {
@@ -199,7 +199,7 @@ export async function deleteFolder(provider, token, folderPath) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ path: folderPath }),
-        }
+        },
       );
 
       const result = await response.json();
@@ -229,12 +229,12 @@ export async function deleteFolder(provider, token, folderPath) {
 
         const searchResponse = await fetch(
           `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-            searchQuery
+            searchQuery,
           )}`,
           {
             method: "GET",
             headers: { Authorization: `Bearer ${token}` },
-          }
+          },
         );
 
         const searchResult = await searchResponse.json();
@@ -252,7 +252,7 @@ export async function deleteFolder(provider, token, folderPath) {
           {
             method: "DELETE",
             headers: { Authorization: `Bearer ${token}` },
-          }
+          },
         );
 
         if (!deleteResponse.ok) {
@@ -278,7 +278,7 @@ export async function deleteFolder(provider, token, folderPath) {
           headers: {
             Authorization: `Bearer ${token}`,
           },
-        }
+        },
       );
 
       if (!deleteResponse.ok) {
@@ -312,7 +312,7 @@ export async function createSession(
   token,
   folderIdentifier,
   experimentID,
-  sessionId
+  sessionId,
 ) {
   const fileName = `${experimentID}_${sessionId}.csv`;
   const initialCSV = "";
@@ -330,7 +330,7 @@ export async function createSession(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ path: filePath }),
-      }
+      },
     );
 
     if (checkResult.status === 200) {
@@ -353,7 +353,7 @@ export async function createSession(
           "Content-Type": "application/octet-stream",
         },
         body: initialCSV,
-      }
+      },
     );
 
     if (uploadResult.status !== 200) {
@@ -372,12 +372,12 @@ export async function createSession(
     const searchQuery = `name='${fileName}' and '${folderIdentifier}' in parents and trashed=false`;
     const checkResult = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-        searchQuery
+        searchQuery,
       )}`,
       {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
-      }
+      },
     );
 
     const checkData = await checkResult.json();
@@ -418,7 +418,7 @@ export async function createSession(
           "Content-Type": `multipart/related; boundary=${boundary}`,
         },
         body: multipartRequestBody,
-      }
+      },
     );
 
     const result = await uploadResult.json();
@@ -483,7 +483,7 @@ export async function appendResult(
   folderIdentifier,
   experimentID,
   sessionId,
-  csvContent
+  csvContent,
 ) {
   const fileName = `${experimentID}_${sessionId}.csv`;
 
@@ -505,7 +505,7 @@ export async function appendResult(
           "Content-Type": "application/octet-stream",
         },
         body: csvContent,
-      }
+      },
     );
 
     if (uploadResult.status !== 200) {
@@ -524,12 +524,12 @@ export async function appendResult(
     const searchQuery = `name='${fileName}' and '${folderIdentifier}' in parents and trashed=false`;
     const searchResult = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-        searchQuery
+        searchQuery,
       )}`,
       {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
-      }
+      },
     );
 
     const searchData = await searchResult.json();
@@ -553,7 +553,7 @@ export async function appendResult(
           "Content-Type": "text/csv",
         },
         body: csvContent,
-      }
+      },
     );
 
     if (!uploadResult.ok) {
@@ -578,7 +578,7 @@ export async function appendResult(
       const componentIdMatch = uploadLink.match(/\/resources\/([^\/]+)\//);
       if (componentIdMatch) {
         const componentId = componentIdMatch[1];
-        
+
         // Listar archivos para encontrar el existente
         const filesLink = `https://api.osf.io/v2/nodes/${componentId}/files/osfstorage/`;
         const filesResponse = await fetch(filesLink, {
@@ -589,7 +589,7 @@ export async function appendResult(
         if (filesResponse.ok) {
           const filesData = await filesResponse.json();
           const existingFile = filesData.data.find(
-            (file) => file.attributes.name === fileName
+            (file) => file.attributes.name === fileName,
           );
 
           if (existingFile) {
@@ -603,7 +603,10 @@ export async function appendResult(
         }
       }
     } catch (error) {
-      console.log("OSF: No existing file to delete or error deleting:", error.message);
+      console.log(
+        "OSF: No existing file to delete or error deleting:",
+        error.message,
+      );
     }
 
     // Ahora crear el archivo nuevo
@@ -651,7 +654,7 @@ export async function listSessions(
   provider,
   token,
   folderIdentifier,
-  experimentID
+  experimentID,
 ) {
   if (provider === "dropbox") {
     const listResult = await fetch(
@@ -666,7 +669,7 @@ export async function listSessions(
           path: folderIdentifier,
           recursive: false,
         }),
-      }
+      },
     );
 
     if (listResult.status !== 200) {
@@ -685,7 +688,7 @@ export async function listSessions(
         (entry) =>
           entry[".tag"] === "file" &&
           entry.name.startsWith(`${experimentID}_`) &&
-          entry.name.endsWith(".csv")
+          entry.name.endsWith(".csv"),
       )
       .map((entry) => {
         const sessionId = entry.name
@@ -707,12 +710,12 @@ export async function listSessions(
 
     const listResult = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-        searchQuery
+        searchQuery,
       )}&fields=files(id,name,createdTime,modifiedTime)`,
       {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
-      }
+      },
     );
 
     if (!listResult.ok) {
@@ -755,7 +758,7 @@ export async function listSessions(
         headers: {
           Authorization: `Bearer ${token}`,
         },
-      }
+      },
     );
 
     if (!nodeResponse.ok) {
@@ -769,7 +772,7 @@ export async function listSessions(
 
     const nodeData = await nodeResponse.json();
     const storageProvider = nodeData.data.find(
-      (p) => p.attributes.name === "osfstorage"
+      (p) => p.attributes.name === "osfstorage",
     );
 
     if (!storageProvider) {
@@ -800,7 +803,7 @@ export async function listSessions(
         (file) =>
           file.attributes.kind === "file" &&
           file.attributes.name.startsWith(`${experimentID}_`) &&
-          file.attributes.name.endsWith(".csv")
+          file.attributes.name.endsWith(".csv"),
       )
       .map((file) => {
         const sessionId = file.attributes.name
@@ -836,7 +839,7 @@ export async function downloadSession(
   token,
   folderIdentifier,
   experimentID,
-  sessionId
+  sessionId,
 ) {
   const fileName = `${experimentID}_${sessionId}.csv`;
 
@@ -851,7 +854,7 @@ export async function downloadSession(
           Authorization: `Bearer ${token}`,
           "Dropbox-API-Arg": JSON.stringify({ path: filePath }),
         },
-      }
+      },
     );
 
     if (downloadResult.status !== 200) {
@@ -865,12 +868,12 @@ export async function downloadSession(
     const searchQuery = `name='${fileName}' and '${folderIdentifier}' in parents and trashed=false`;
     const searchResult = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-        searchQuery
+        searchQuery,
       )}`,
       {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
-      }
+      },
     );
 
     const searchData = await searchResult.json();
@@ -890,7 +893,7 @@ export async function downloadSession(
       {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
-      }
+      },
     );
 
     if (!downloadResult.ok) {
@@ -915,7 +918,7 @@ export async function downloadSession(
         headers: {
           Authorization: `Bearer ${token}`,
         },
-      }
+      },
     );
 
     if (!nodeResponse.ok) {
@@ -928,7 +931,7 @@ export async function downloadSession(
 
     const nodeData = await nodeResponse.json();
     const storageProvider = nodeData.data.find(
-      (p) => p.attributes.name === "osfstorage"
+      (p) => p.attributes.name === "osfstorage",
     );
 
     if (!storageProvider) {
@@ -954,7 +957,7 @@ export async function downloadSession(
 
     const filesData = await filesResponse.json();
     const targetFile = filesData.data.find(
-      (f) => f.attributes.name === fileName
+      (f) => f.attributes.name === fileName,
     );
 
     if (!targetFile) {
@@ -999,7 +1002,7 @@ export async function deleteSession(
   token,
   folderIdentifier,
   experimentID,
-  sessionId
+  sessionId,
 ) {
   const fileName = `${experimentID}_${sessionId}.csv`;
 
@@ -1015,7 +1018,7 @@ export async function deleteSession(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ path: filePath }),
-      }
+      },
     );
 
     if (deleteResult.status !== 200) {
@@ -1033,12 +1036,12 @@ export async function deleteSession(
     const searchQuery = `name='${fileName}' and '${folderIdentifier}' in parents and trashed=false`;
     const searchResult = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-        searchQuery
+        searchQuery,
       )}`,
       {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
-      }
+      },
     );
 
     const searchData = await searchResult.json();
@@ -1058,7 +1061,7 @@ export async function deleteSession(
       {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
-      }
+      },
     );
 
     if (!deleteResult.ok) {
@@ -1083,7 +1086,7 @@ export async function deleteSession(
         headers: {
           Authorization: `Bearer ${token}`,
         },
-      }
+      },
     );
 
     if (!nodeResponse.ok) {
@@ -1096,7 +1099,7 @@ export async function deleteSession(
 
     const nodeData = await nodeResponse.json();
     const storageProvider = nodeData.data.find(
-      (p) => p.attributes.name === "osfstorage"
+      (p) => p.attributes.name === "osfstorage",
     );
 
     if (!storageProvider) {
@@ -1122,7 +1125,7 @@ export async function deleteSession(
 
     const filesData = await filesResponse.json();
     const targetFile = filesData.data.find(
-      (f) => f.attributes.name === fileName
+      (f) => f.attributes.name === fileName,
     );
 
     if (!targetFile) {
@@ -1166,7 +1169,7 @@ export async function postFile(
   token,
   folderIdentifier,
   filedata,
-  filename
+  filename,
 ) {
   if (provider === "dropbox") {
     const filePath = `${folderIdentifier}/${filename}`;
@@ -1186,7 +1189,7 @@ export async function postFile(
           "Content-Type": "application/octet-stream",
         },
         body: filedata,
-      }
+      },
     );
 
     if (result.status !== 200) {
@@ -1228,7 +1231,7 @@ export async function postFile(
           "Content-Type": `multipart/related; boundary=${boundary}`,
         },
         body: multipartRequestBody,
-      }
+      },
     );
 
     const result = await uploadResult.json();
