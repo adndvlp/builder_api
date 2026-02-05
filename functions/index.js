@@ -10,6 +10,7 @@ import { githubOAuthCallback } from "./api-github.js";
 import { publishExperiment } from "./routes/github.js";
 import { googleDriveOAuthCallback } from "./api-google-drive.js";
 import { osfManage } from "./api-osf.js";
+import { osfOAuthCallback } from "./api-osf-oauth.js";
 import { setGlobalOptions } from "firebase-functions/v2";
 
 setGlobalOptions({
@@ -27,4 +28,5 @@ export {
   publishExperiment,
   googleDriveOAuthCallback,
   osfManage,
+  osfOAuthCallback,
 };

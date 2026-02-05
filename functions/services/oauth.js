@@ -1,5 +1,6 @@
 import fetch from "node-fetch";
 import { db } from "../app.js";
+import { refreshOSFToken } from "../api-osf-oauth.js";
 
 // Configuración de proveedores OAuth
 const OAUTH_CONFIGS = {
@@ -13,6 +14,11 @@ const OAUTH_CONFIGS = {
       "414213417080-bgjk8udcblfgrdld33eif0cmtofl7kir.apps.googleusercontent.com",
     clientSecret: "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",
     tokenUrl: "https://oauth2.googleapis.com/token",
+  },
+  osf: {
+    clientId: "ee4514d3235d4acb8da4443b3516ede2",
+    clientSecret: "jBAj5jjv5fNCfzkfWPYBbsM7gWlmur0rBy3gAu3K",
+    tokenUrl: "https://accounts.osf.io/oauth2/token",
   },
 };
 
@@ -52,7 +58,7 @@ async function refreshAccessToken(provider, refreshToken) {
     if (!tokens.access_token) {
       console.error(
         `Failed to refresh ${provider} token:`,
-        tokens.error_description
+        tokens.error_description,
       );
       return {
         success: false,
@@ -77,42 +83,12 @@ async function refreshAccessToken(provider, refreshToken) {
 
 /**
  * Obtiene un token válido (refresca si es necesario)
- * @param {string} provider - El proveedor ('dropbox' o 'googledrive')
+ * @param {string} provider - El proveedor ('dropbox', 'googledrive', o 'osf')
  * @param {string} uid - ID del usuario
  * @returns {Promise<Object>} - Objeto con el token válido o error
  */
 export async function getValidToken(provider, uid) {
   try {
-    // Para OSF, solo necesitamos recuperar el token (no hay OAuth/refresh)
-    if (provider === "osf") {
-      const userRef = db.collection("users").doc(uid);
-      const userDoc = await userRef.get();
-
-      if (!userDoc.exists) {
-        console.error("User not found:", uid);
-        return {
-          success: false,
-          error: "User not found",
-        };
-      }
-
-      const userData = userDoc.data();
-
-      if (!userData.osfToken || !userData.osfTokenValid) {
-        console.error("User does not have valid OSF token");
-        return {
-          success: false,
-          error: "User has not connected OSF or token is invalid",
-        };
-      }
-
-      return {
-        success: true,
-        access_token: userData.osfToken,
-        wasRefreshed: false,
-      };
-    }
-
     // Obtener datos del usuario desde Firestore
     const userRef = db.collection("users").doc(uid);
     const userDoc = await userRef.get();
@@ -127,6 +103,78 @@ export async function getValidToken(provider, uid) {
 
     const userData = userDoc.data();
 
+    // Para OSF, intentar usar OAuth tokens primero, luego fallback a token manual
+    if (provider === "osf") {
+      // Intentar usar OAuth tokens
+      const tokensObject = userData.osfTokens;
+
+      if (tokensObject && tokensObject.access_token) {
+        const currentTime = Date.now();
+        const expiresAt = tokensObject.expires_at || 0;
+
+        // Si el token OAuth aún es válido (con margen de 5 minutos), devolverlo
+        if (expiresAt > currentTime + 5 * 60 * 1000) {
+          console.log("Using existing valid OSF OAuth token");
+          return {
+            success: true,
+            access_token: tokensObject.access_token,
+            wasRefreshed: false,
+          };
+        }
+
+        // El token expiró o está por expirar, intentar refrescarlo si tenemos refresh token
+        if (tokensObject.refresh_token) {
+          console.log(
+            "OSF OAuth token expired or about to expire, refreshing...",
+          );
+          try {
+            const refreshResult = await refreshOSFToken(
+              tokensObject.refresh_token,
+            );
+
+            // Actualizar el objeto completo de tokens manteniendo los otros campos
+            const updatedTokens = {
+              ...tokensObject,
+              access_token: refreshResult.access_token,
+              expires_at: refreshResult.expires_at,
+            };
+
+            // Guardar el nuevo token en Firestore
+            await userRef.update({
+              osfTokens: updatedTokens,
+            });
+
+            console.log("OSF OAuth token refreshed successfully");
+            return {
+              success: true,
+              access_token: refreshResult.access_token,
+              wasRefreshed: true,
+            };
+          } catch (refreshError) {
+            console.error("Failed to refresh OSF OAuth token:", refreshError);
+            // Si falla el refresh, intentar fallback a token manual
+          }
+        }
+      }
+
+      // Fallback a token manual si no hay OAuth tokens o falló el refresh
+      if (userData.osfToken && userData.osfTokenValid) {
+        console.log("Using manual OSF token as fallback");
+        return {
+          success: true,
+          access_token: userData.osfToken,
+          wasRefreshed: false,
+        };
+      }
+
+      console.error("User does not have valid OSF token (OAuth or manual)");
+      return {
+        success: false,
+        error: "User has not connected OSF or token is invalid",
+      };
+    }
+
+    // Para otros proveedores OAuth (Dropbox, Google Drive)
     // Mapeo de nombres de campos según el proveedor
     const tokensFieldName =
       provider === "dropbox" ? "dropboxTokens" : "googleDriveTokens";
@@ -162,7 +210,7 @@ export async function getValidToken(provider, uid) {
     console.log(`${provider} token expired or about to expire, refreshing...`);
     const refreshResult = await refreshAccessToken(
       provider,
-      tokensObject.refresh_token
+      tokensObject.refresh_token,
     );
 
     if (!refreshResult.success) {
@@ -191,7 +239,7 @@ export async function getValidToken(provider, uid) {
       wasRefreshed: true,
     };
   } catch (error) {
-    console.error(`Error in getValid${provider}Token:`, error);
+    console.error(`Error in getValidToken for ${provider}:`, error);
     return {
       success: false,
       error: error.message,
@@ -213,7 +261,7 @@ export async function saveTokens(
   uid,
   accessToken,
   refreshToken,
-  expiresIn
+  expiresIn,
 ) {
   try {
     const userRef = db.collection("users").doc(uid);
@@ -232,7 +280,7 @@ export async function saveTokens(
           token_type: provider === "googledrive" ? "Bearer" : "bearer",
         },
       },
-      { merge: true }
+      { merge: true },
     );
 
     console.log(`${provider} tokens saved successfully for user:`, uid);

@@ -4,7 +4,7 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if(request.auth.uid == userId);
       allow write: if(request.auth.uid == userId) && 
-        request.resource.data.keys().hasOnly(['email', 'experiments', 'dropboxTokens', 'googleDriveTokens', 'githubTokens', 'osfToken', 'osfTokenValid', 'osfUserId', 'osfUserName', 'osfProjectId', 'uid']) &&
+        request.resource.data.keys().hasOnly(['email', 'experiments', 'dropboxTokens', 'googleDriveTokens', 'githubTokens', 'osfTokens', 'osfTokenValid', 'osfUserId', 'osfUserName', 'osfProjectId', 'uid']) &&
         (request.resource.data.uid == userId);
       allow delete: if(request.auth.uid == userId);
     }

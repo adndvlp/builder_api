@@ -133,6 +133,53 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
         const provider = storageProvider || "googledrive";
 
         try {
+          // Si es OSF, verificar/crear proyecto
+          if (provider === "osf") {
+            const userDoc = await db.collection("users").doc(uid).get();
+            if (userDoc.exists) {
+              const userData = userDoc.data();
+              if (!userData.osfProjectId) {
+                console.log("[NEW EXPERIMENT] Creating OSF project...");
+                const tokenResult = await getValidToken("osf", uid);
+                if (tokenResult.success) {
+                  const projectResponse = await fetch(
+                    "https://api.osf.io/v2/nodes/?region=us",
+                    {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${tokenResult.access_token}`,
+                      },
+                      body: JSON.stringify({
+                        data: {
+                          type: "nodes",
+                          attributes: {
+                            title: "ExpBuilder",
+                            category: "project",
+                            description: "Experiment Builder data storage",
+                            public: false,
+                          },
+                        },
+                      }),
+                    },
+                  );
+
+                  if (projectResponse.ok) {
+                    const projectData = await projectResponse.json();
+                    const osfProjectId = projectData.data.id;
+                    await db.collection("users").doc(uid).update({
+                      osfProjectId: osfProjectId,
+                    });
+                    console.log(
+                      "[NEW EXPERIMENT] OSF project created:",
+                      osfProjectId,
+                    );
+                  }
+                }
+              }
+            }
+          }
+
           const createResult = await createExperiment(
             experimentID,
             repoName,
@@ -195,9 +242,46 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
                   if (userData?.osfProjectId) {
                     folderPath = userData.osfProjectId;
                   } else {
-                    console.error(
-                      `[PROVIDER CHANGE] User has no osfProjectId!`,
+                    // Crear proyecto si no existe
+                    console.log(
+                      `[PROVIDER CHANGE] Creating OSF project for user...`,
                     );
+                    const projectResponse = await fetch(
+                      "https://api.osf.io/v2/nodes/?region=us",
+                      {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization: `Bearer ${tokenResult.access_token}`,
+                        },
+                        body: JSON.stringify({
+                          data: {
+                            type: "nodes",
+                            attributes: {
+                              title: "ExpBuilder",
+                              category: "project",
+                              description: "Experiment Builder data storage",
+                              public: false,
+                            },
+                          },
+                        }),
+                      },
+                    );
+
+                    if (projectResponse.ok) {
+                      const projectData = await projectResponse.json();
+                      folderPath = projectData.data.id;
+                      await db.collection("users").doc(uid).update({
+                        osfProjectId: folderPath,
+                      });
+                      console.log(
+                        `[PROVIDER CHANGE] OSF project created: ${folderPath}`,
+                      );
+                    } else {
+                      console.error(
+                        `[PROVIDER CHANGE] Failed to create OSF project`,
+                      );
+                    }
                   }
                 }
               }

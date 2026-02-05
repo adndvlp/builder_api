@@ -133,7 +133,7 @@ async function handleSaveToken(req, res) {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-      }
+      },
     );
 
     if (!projectResponse.ok) {
@@ -159,7 +159,7 @@ async function handleSaveToken(req, res) {
       osfUserName: validation.fullName,
       osfProjectId: projectId,
     },
-    { merge: true }
+    { merge: true },
   );
 
   console.log("OSF token and project ID saved successfully for user:", uid);
@@ -211,7 +211,7 @@ async function handleValidateToken(req, res) {
     {
       osfTokenValid: validation.valid,
     },
-    { merge: true }
+    { merge: true },
   );
 
   return res.status(200).json({
@@ -238,13 +238,13 @@ async function handleDisconnect(req, res) {
   // Eliminar el token de Firestore
   await db.collection("users").doc(uid).set(
     {
-      osfToken: null,
+      osfTokens: null,
       osfTokenValid: false,
       osfUserId: null,
       osfUserName: null,
       osfProjectId: null,
     },
-    { merge: true }
+    { merge: true },
   );
 
   console.log("OSF token disconnected for user:", uid);
@@ -272,7 +272,7 @@ async function handleCreateComponent(req, res) {
     "Creating OSF data component for user:",
     uid,
     "project:",
-    projectId
+    projectId,
   );
 
   // Obtener el token de OSF
@@ -314,7 +314,7 @@ async function handleCreateComponent(req, res) {
           },
         },
       }),
-    }
+    },
   );
 
   if (!createResponse.ok) {
