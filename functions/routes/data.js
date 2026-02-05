@@ -234,28 +234,11 @@ export const apiDataComplete = onRequest({ cors: true }, async (req, res) => {
           ? exp_data.dropboxFolder
           : exp_data.osfUploadLink;
 
-    // Crear la sesión si no existe
-    const createResult = await createSession(
-      storageProvider,
-      tokenResult.access_token,
-      folderIdentifier,
-      experimentID,
-      sessionId,
+    // Con batch=0, NO crear sesión para NINGÚN proveedor
+    // El CSV completo se envía directo sin archivo vacío previo
+    console.log(
+      `Skipping session creation (batch=0), sending complete CSV for ${storageProvider}`,
     );
-
-    // Si la sesión ya existe (409), continuamos de todas formas
-    if (
-      !createResult.success &&
-      createResult.errorCode !== 409 &&
-      createResult.error !== "Session already exists"
-    ) {
-      res.status(400).json({
-        success: false,
-        message: `Error creating session in ${storageProvider}`,
-        error: createResult.errorText || createResult.error,
-      });
-      return;
-    }
 
     // Enviar el CSV directamente al storage
     const appendResult_ = await appendResult(
@@ -392,6 +375,11 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
   try {
     await writeLog(experimentID, "createSession");
 
+    const { batchSize } = req.body;
+    console.log(
+      `[CREATE SESSION] batchSize received: ${batchSize} (type: ${typeof batchSize})`,
+    );
+
     const exp_doc_ref = db.collection("experiments").doc(experimentID);
     let exp_doc = await exp_doc_ref.get();
 
@@ -478,15 +466,31 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
       experimentID,
       sessionId,
       participantNumber,
+      batchSize,
     });
 
-    // Crear documento de sesión en Firestore
-    await session_ref.set({
-      experimentID: experimentID,
-      sessionId: sessionId,
-      participantNumber: participantNumber,
-      createdAt: new Date().toISOString(),
-    });
+    // Si batchSize=0, NO crear documento de sesión (solo retornar participantNumber)
+    // Los datos se enviarán directo al storage sin pasar por Firestore
+    // Validar explícitamente que batchSize es 0 (no undefined, null, etc.)
+    const shouldCreateSessionDoc =
+      batchSize !== 0 && batchSize !== undefined && batchSize !== null;
+
+    if (shouldCreateSessionDoc) {
+      console.log(
+        `[CREATE SESSION] Creating Firestore document (batchSize=${batchSize})`,
+      );
+      // Crear documento de sesión en Firestore (para batch>0 o sin IndexedDB)
+      await session_ref.set({
+        experimentID: experimentID,
+        sessionId: sessionId,
+        participantNumber: participantNumber,
+        createdAt: new Date().toISOString(),
+      });
+    } else {
+      console.log(
+        `[CREATE SESSION] Skipping Firestore document creation (batchSize=${batchSize})`,
+      );
+    }
 
     // Incrementar contador de sesiones en Firestore
     await exp_doc_ref.set(
