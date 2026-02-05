@@ -19,7 +19,7 @@ export async function createExperiment(
   experimentID,
   experimentName,
   uid,
-  storageProvider = "googledrive"
+  storageProvider = "googledrive",
 ) {
   await writeLog(experimentID, "createExperiment");
 
@@ -47,7 +47,7 @@ export async function createExperiment(
           storageProvider,
           tokenResult.access_token,
           projectPath,
-          experimentName // componentName para OSF
+          experimentName, // componentName para OSF
         );
 
         if (folderResult.success) {
@@ -92,6 +92,9 @@ export async function createExperiment(
     allowJSON: true,
     allowCSV: true,
     requiredFields: ["trial_type"],
+    activeConditionAssignment: true,
+    nConditions: 1,
+    currentCondition: 0,
     createdAt: FieldValue.serverTimestamp(),
     ...(uid && { owner: uid }),
   });
@@ -149,7 +152,7 @@ export async function deleteExperiment(experimentID, uid, repoName = null) {
         const deleteResult = await deleteFolder(
           storageProvider,
           tokenResult.access_token,
-          folderIdentifier
+          folderIdentifier,
         );
 
         if (deleteResult.success) {
@@ -158,14 +161,14 @@ export async function deleteExperiment(experimentID, uid, repoName = null) {
           storageError = deleteResult.errorText;
           console.error(
             `Error deleting ${storageProvider} folder:`,
-            storageError
+            storageError,
           );
         }
       } else {
         storageError = `Token error: ${tokenResult.error}`;
         console.error(
           `Error getting valid ${storageProvider} token:`,
-          tokenResult.error
+          tokenResult.error,
         );
       }
     } catch (error) {
@@ -205,13 +208,13 @@ export async function deleteExperiment(experimentID, uid, repoName = null) {
             const deleteRepoResult = await deleteRepositoryGithub(
               accessToken,
               owner,
-              repoToDelete
+              repoToDelete,
             );
 
             if (deleteRepoResult.success) {
               repoDeleted = true;
               console.log(
-                `GitHub repository ${repoToDelete} deleted successfully`
+                `GitHub repository ${repoToDelete} deleted successfully`,
               );
             } else {
               // Si el error es 404, significa que el repo no existía (no es un error crítico)
@@ -275,7 +278,7 @@ export const apiCreateExperiment = onRequest(
         experimentID,
         experimentName,
         uid,
-        provider
+        provider,
       );
       res.status(201).json(result);
     } catch (error) {
@@ -284,7 +287,7 @@ export const apiCreateExperiment = onRequest(
         message: `Internal server error: ${error.message}`,
       });
     }
-  }
+  },
 );
 
 /**
@@ -320,5 +323,5 @@ export const apiDeleteExperiment = onRequest(
         });
       }
     }
-  }
+  },
 );

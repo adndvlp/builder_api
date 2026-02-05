@@ -143,6 +143,157 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
 });
 
 /**
+ * Endpoint para enviar experimento completo directo al storage (sin Firestore)
+ * Usado cuando batchSize = 0 (enviar todo al final)
+ */
+export const apiDataComplete = onRequest({ cors: true }, async (req, res) => {
+  const { experimentID, sessionId, trialsData, storage } = req.body;
+
+  if (!experimentID || !sessionId || !trialsData) {
+    res.status(400).json({
+      success: false,
+      message:
+        "Missing required parameters: experimentID, sessionId, trialsData",
+    });
+    return;
+  }
+
+  try {
+    await writeLog(experimentID, "saveCompleteExperiment");
+
+    const exp_doc_ref = db.collection("experiments").doc(experimentID);
+    const exp_doc = await exp_doc_ref.get();
+
+    if (!exp_doc.exists) {
+      res.status(400).json(MESSAGES.EXPERIMENT_NOT_FOUND);
+      return;
+    }
+
+    const exp_data = exp_doc.data();
+    if (!exp_data.active) {
+      res.status(400).json(MESSAGES.DATA_COLLECTION_NOT_ACTIVE);
+      return;
+    }
+
+    const storageProvider =
+      storage || exp_data.storageProvider || "googledrive";
+
+    console.log("Saving complete experiment directly to storage:", {
+      experimentID,
+      sessionId,
+      storageProvider,
+      trialsCount: Array.isArray(trialsData) ? trialsData.length : 0,
+    });
+
+    // Convertir trials JSON a CSV
+    let csvData;
+    try {
+      // Asegurar que trialsData sea un array
+      const trials = Array.isArray(trialsData) ? trialsData : [trialsData];
+
+      // Extraer todos los campos únicos
+      const allFields = Array.from(
+        new Set(trials.flatMap((row) => Object.keys(row))),
+      );
+
+      // Convertir a CSV usando json2csv
+      const parser = new Parser({ fields: allFields });
+      csvData = parser.parse(trials);
+
+      console.log(`Converted ${trials.length} trials to CSV`);
+    } catch (err) {
+      console.error("Error converting to CSV:", err);
+      res.status(400).json({
+        success: false,
+        message: "Error converting data to CSV",
+        error: err.message,
+      });
+      return;
+    }
+
+    // Obtener token válido
+    const tokenResult = await getValidToken(storageProvider, exp_data.owner);
+
+    if (!tokenResult.success) {
+      res
+        .status(400)
+        .json(
+          storageProvider === "dropbox"
+            ? MESSAGES.INVALID_DROPBOX_TOKEN
+            : storageProvider === "osf"
+              ? MESSAGES.INVALID_OSF_TOKEN
+              : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN,
+        );
+      return;
+    }
+
+    const folderIdentifier =
+      storageProvider === "googledrive"
+        ? exp_data.driveFolderId
+        : storageProvider === "dropbox"
+          ? exp_data.dropboxFolder
+          : exp_data.osfUploadLink;
+
+    // Crear la sesión si no existe
+    const createResult = await createSession(
+      storageProvider,
+      tokenResult.access_token,
+      folderIdentifier,
+      experimentID,
+      sessionId,
+    );
+
+    // Si la sesión ya existe (409), continuamos de todas formas
+    if (
+      !createResult.success &&
+      createResult.errorCode !== 409 &&
+      createResult.error !== "Session already exists"
+    ) {
+      res.status(400).json({
+        success: false,
+        message: `Error creating session in ${storageProvider}`,
+        error: createResult.errorText || createResult.error,
+      });
+      return;
+    }
+
+    // Enviar el CSV directamente al storage
+    const appendResult_ = await appendResult(
+      storageProvider,
+      tokenResult.access_token,
+      folderIdentifier,
+      experimentID,
+      sessionId,
+      csvData,
+    );
+
+    if (!appendResult_.success) {
+      res.status(400).json({
+        success: false,
+        message: `Failed to send data to ${storageProvider}`,
+        error: appendResult_.errorText,
+      });
+      return;
+    }
+
+    console.log(`Complete experiment saved to ${storageProvider} successfully`);
+
+    res.status(201).json({
+      success: true,
+      message: "Complete experiment saved successfully to storage",
+      storageProvider,
+    });
+  } catch (error) {
+    console.error("Error in apiDataComplete:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+});
+
+/**
  * Función auxiliar para guardar archivo completo (legacy)
  */
 async function handlePostFile(req, res, experimentID, data, filename) {
@@ -235,6 +386,7 @@ async function handlePostFile(req, res, experimentID, data, filename) {
 
 /**
  * Función auxiliar para crear sesión
+ * Obtiene el número de participante desde el contador de condiciones y lo retorna
  */
 async function handleCreateSession(req, res, experimentID, sessionId) {
   try {
@@ -243,31 +395,10 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
     const exp_doc_ref = db.collection("experiments").doc(experimentID);
     let exp_doc = await exp_doc_ref.get();
 
-    // Si no existe el experimento, créalo directamente aquí
+    // Si no existe el experimento, retornar error (ya no se crea automáticamente aquí)
     if (!exp_doc.exists) {
-      const storageProvider = req.body.storageProvider || "googledrive";
-      await exp_doc_ref.set(
-        {
-          title: experimentID,
-          owner: req.body.uid || "unknown",
-          active: true,
-          sessions: 0,
-          storageProvider: storageProvider,
-          ...(storageProvider === "googledrive" && {
-            driveFolderId: null,
-            driveFolderPath: null,
-          }),
-          ...(storageProvider === "dropbox" && {
-            dropboxFolder: null,
-          }),
-          ...(storageProvider === "osf" && {
-            osfComponentId: null,
-            osfUploadLink: null,
-          }),
-        },
-        { merge: true },
-      );
-      exp_doc = await exp_doc_ref.get();
+      res.status(400).json(MESSAGES.EXPERIMENT_NOT_FOUND);
+      return;
     }
 
     const exp_data = exp_doc.data();
@@ -283,223 +414,79 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
       }
     }
 
-    const storageProvider = exp_data.storageProvider || "googledrive";
-    const tokenResult = await getValidToken(storageProvider, exp_data.owner);
+    // Verificar si la sesión ya existe en Firestore (resume)
+    const session_ref = db
+      .collection("experiments")
+      .doc(experimentID)
+      .collection("sessions")
+      .doc(sessionId);
 
-    if (!tokenResult.success) {
-      res
-        .status(400)
-        .json(
-          storageProvider === "dropbox"
-            ? MESSAGES.INVALID_DROPBOX_TOKEN
-            : storageProvider === "osf"
-              ? MESSAGES.INVALID_OSF_TOKEN
-              : MESSAGES.INVALID_GOOGLE_DRIVE_TOKEN,
-        );
-      return;
-    }
+    const existing_session = await session_ref.get();
 
-    let folderIdentifier =
-      storageProvider === "googledrive"
-        ? exp_data.driveFolderId
-        : storageProvider === "dropbox"
-          ? exp_data.dropboxFolder
-          : exp_data.osfUploadLink;
-
-    // Si no hay folderIdentifier, crear la carpeta ahora
-    if (!folderIdentifier) {
-      const { createFolder } = await import("../services/storage.js");
-
-      // Determinar projectPath según el provider
-      let projectPath;
-
-      if (storageProvider === "osf") {
-        // Para OSF, usar el projectId del usuario
-        const userDoc = await db.collection("users").doc(exp_data.owner).get();
-        const userData = userDoc.data();
-        projectPath = userData?.osfProjectId;
-
-        if (!projectPath) {
-          console.warn(
-            `OSF Project ID not configured for user ${exp_data.owner}, skipping folder creation`,
-          );
-          // No crear carpeta pero continuar - el usuario debe configurar OSF Project ID en Settings
-        } else {
-          console.log(`Creating OSF component in project: ${projectPath}`);
-        }
-      } else {
-        // Para Drive/Dropbox, usar driveFolderPath si existe
-        projectPath = exp_data.driveFolderPath;
-        if (!projectPath) {
-          console.warn(
-            `No folder path found for ${storageProvider}, skipping folder creation`,
-          );
-        } else {
-          console.log(`Creating folder at ${projectPath}`);
-        }
-      }
-
-      // Solo crear carpeta si tenemos un projectPath válido
-      if (projectPath) {
-        const folderResult = await createFolder(
-          storageProvider,
-          tokenResult.access_token,
-          projectPath,
-          exp_data.title || experimentID, // componentName para OSF - usar el nombre del experimento
-        );
-
-        if (folderResult.success) {
-          if (storageProvider === "googledrive" && folderResult.folderId) {
-            folderIdentifier = folderResult.folderId;
-            await exp_doc_ref.update({
-              driveFolderId: folderIdentifier,
-            });
-          } else if (storageProvider === "osf" && folderResult.componentId) {
-            folderIdentifier = folderResult.uploadLink;
-            await exp_doc_ref.update({
-              osfComponentId: folderResult.componentId,
-              osfUploadLink: folderResult.uploadLink,
-            });
-          }
-
-          console.log(
-            `Folder created and experiment updated with folderId: ${folderIdentifier}`,
-          );
-        } else {
-          console.warn(
-            `Could not create folder in ${storageProvider}:`,
-            folderResult.errorText,
-          );
-        }
-      }
-    }
-
-    console.log(`Creating session in ${storageProvider}:`, {
-      folderIdentifier,
-      experimentID,
-      sessionId,
-    });
-
-    let result;
-    let participantNumber = 1;
-
-    // Para OSF, NO crear archivo, solo contar sesiones existentes
-    if (storageProvider === "osf") {
-      console.log(
-        "OSF: Listing sessions to count participants (no file creation)",
-      );
-
-      // folderIdentifier para OSF es el componentId, no el uploadLink
-      const componentId = exp_data.osfComponentId || folderIdentifier;
-
-      const sessionsResult = await listSessions(
-        storageProvider,
-        tokenResult.access_token,
-        componentId,
-        experimentID,
-      );
-
-      participantNumber = sessionsResult.success
-        ? sessionsResult.sessions.length + 1
-        : 1;
-
-      result = {
-        success: true,
-        message: "Session registered (OSF file will be created on finish)",
-        participantNumber,
-      };
-    } else {
-      // Para Google Drive y Dropbox, crear archivo normalmente
-      result = await createSession(
-        storageProvider,
-        tokenResult.access_token,
-        folderIdentifier,
+    if (existing_session.exists) {
+      // Sesión existente (resume) - devolver participantNumber guardado
+      const session_data = existing_session.data();
+      console.log("Session already exists (resume):", {
         experimentID,
         sessionId,
-      );
-    }
+        participantNumber: session_data.participantNumber,
+      });
 
-    console.log(`${storageProvider} creation result:`, result);
-
-    // Si error 404 o 400, crear experimento completo
-    if (
-      !result.success &&
-      (result.errorCode === 404 || result.errorCode === 400)
-    ) {
-      try {
-        console.log(
-          `Creating experiment using createExperiment for ${storageProvider}`,
-        );
-
-        await createExperiment(
-          experimentID,
-          experimentID,
-          req.body.uid || "unknown",
-          storageProvider,
-        );
-
-        // Obtener los datos actualizados del experimento
-        const updated_exp_doc = await exp_doc_ref.get();
-        const updated_exp_data = updated_exp_doc.data();
-        const updated_folderIdentifier =
-          storageProvider === "googledrive"
-            ? updated_exp_data.driveFolderId
-            : storageProvider === "dropbox"
-              ? updated_exp_data.dropboxFolder
-              : updated_exp_data.osfUploadLink;
-
-        // Reintentar crear la sesión con los datos actualizados
-        result = await createSession(
-          storageProvider,
-          tokenResult.access_token,
-          updated_folderIdentifier,
-          experimentID,
-          sessionId,
-        );
-        console.log(`Retry ${storageProvider} creation result:`, result);
-      } catch (err) {
-        console.error("Error creating experiment and retrying session:", err);
-        res.status(500).json({
-          success: false,
-          message: "Error creating experiment and retrying session",
-          error: err.message,
-        });
-        return;
-      }
-    }
-
-    if (!result.success) {
-      if (
-        result.errorCode === 409 ||
-        result.error === "Session already exists"
-      ) {
-        res.status(409).json({
-          success: false,
-          message: "Session already exists",
-          errorCode: 409,
-        });
-        return;
-      }
-      res.status(400).json({
-        success: false,
-        message: result.errorText || result.error || "Error creating session",
+      res.status(200).json({
+        success: true,
+        message: "Session resumed successfully",
+        sessionId: sessionId,
+        participantNumber: session_data.participantNumber,
       });
       return;
     }
 
-    // Calcular el número de participante (ya calculado para OSF arriba)
-    if (storageProvider !== "osf") {
-      const sessionsResult = await listSessions(
-        storageProvider,
-        tokenResult.access_token,
-        folderIdentifier,
-        experimentID,
-      );
+    // Obtener número de participante desde el contador de condiciones
+    let participantNumber;
+    try {
+      if (!exp_data.activeConditionAssignment) {
+        res.status(400).json(MESSAGES.CONDITION_ASSIGNMENT_NOT_ACTIVE);
+        return;
+      }
 
-      participantNumber = sessionsResult.success
-        ? sessionsResult.sessions.length + 1
-        : 1;
+      // Usar transacción para incremento atómico
+      participantNumber = await db.runTransaction(async (t) => {
+        const exp_doc = await t.get(exp_doc_ref);
+        const exp_data = exp_doc.data();
+        const currentCondition = exp_data.currentCondition || 0;
+
+        // Si nConditions > 1, rotar con módulo. Si nConditions === 1, incrementar sin límite
+        const nextCondition =
+          exp_data.nConditions > 1
+            ? (currentCondition + 1) % exp_data.nConditions
+            : currentCondition + 1;
+
+        t.set(
+          exp_doc_ref,
+          { currentCondition: nextCondition },
+          { merge: true },
+        );
+        return currentCondition;
+      });
+    } catch (error) {
+      console.error("Error getting condition:", error);
+      res.status(400).json(MESSAGES.UNKNOWN_ERROR_GETTING_CONDITION);
+      return;
     }
+
+    console.log("Session registered with participant number:", {
+      experimentID,
+      sessionId,
+      participantNumber,
+    });
+
+    // Crear documento de sesión en Firestore
+    await session_ref.set({
+      experimentID: experimentID,
+      sessionId: sessionId,
+      participantNumber: participantNumber,
+      createdAt: new Date().toISOString(),
+    });
 
     // Incrementar contador de sesiones en Firestore
     await exp_doc_ref.set(
@@ -507,16 +494,11 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
       { merge: true },
     );
 
-    console.log("Session created successfully:", {
-      participantNumber,
-      sessionId,
-    });
-
     res.status(201).json({
       success: true,
-      message: "Session created successfully",
-      participantNumber: participantNumber,
+      message: "Session registered successfully",
       sessionId: sessionId,
+      participantNumber: participantNumber,
     });
   } catch (error) {
     console.error("Error in handleCreateSession:", error);
@@ -719,19 +701,43 @@ export async function finalizeSession(experimentID, sessionId) {
     throw new Error("NO_RESULTS");
   }
 
-  // Convertir a array y ORDENAR por clientTimestamp del cliente
-  const results = trials_snapshot.docs
-    .map((doc) => {
-      const data = doc.data();
-      // Deserializar campos que fueron convertidos a JSON strings
-      return deserializeFromFirestore(data);
-    })
-    .sort((a, b) => {
-      // Ordenar por clientTimestamp (timestamp del cliente)
-      const timeA = a.clientTimestamp || 0;
-      const timeB = b.clientTimestamp || 0;
-      return timeA - timeB;
-    });
+  // Convertir a array y expandir batches concatenados
+  let results = [];
+
+  trials_snapshot.docs.forEach((doc) => {
+    const data = doc.data();
+
+    // Si es un batch concatenado (tiene trialsData como string JSON)
+    if (data.trialsData && typeof data.trialsData === "string") {
+      try {
+        const batchTrials = JSON.parse(data.trialsData);
+        if (Array.isArray(batchTrials)) {
+          // Deserializar cada trial del batch
+          const deserializedTrials = batchTrials.map((trial) =>
+            deserializeFromFirestore(trial),
+          );
+          results = results.concat(deserializedTrials);
+          console.log(`Expanded batch with ${batchTrials.length} trials`);
+        }
+      } catch (err) {
+        console.error("Error parsing batch trialsData:", err);
+      }
+    } else {
+      // Trial individual normal
+      results.push(deserializeFromFirestore(data));
+    }
+  });
+
+  if (results.length === 0) {
+    throw new Error("NO_RESULTS");
+  }
+
+  // ORDENAR por clientTimestamp del cliente
+  results.sort((a, b) => {
+    const timeA = a.clientTimestamp || 0;
+    const timeB = b.clientTimestamp || 0;
+    return timeA - timeB;
+  });
 
   console.log(`Retrieved ${results.length} trials, ordered by clientTimestamp`);
 
@@ -778,26 +784,130 @@ export async function finalizeSession(experimentID, sessionId) {
         ? exp_data.dropboxFolder
         : exp_data.osfUploadLink;
 
-  // Crear la sesión si no existe
-  const createResult = await createSession(
-    storageProvider,
-    tokenResult.access_token,
-    folderIdentifier,
-    experimentID,
-    sessionId,
-  );
+  // Determinar si debe usar PATCH o CREATE+APPEND
+  // Drive y Dropbox SIEMPRE usan PATCH (descargar → concatenar → sobrescribir)
+  // OSF usa append directo (no PATCH)
+  const isPatchMode =
+    storageProvider === "googledrive" || storageProvider === "dropbox";
 
-  // Si la sesión ya existe (409), continuamos de todas formas
-  if (
-    !createResult.success &&
-    createResult.errorCode !== 409 &&
-    createResult.error !== "Session already exists"
-  ) {
-    throw new Error(
-      createResult.errorText ||
-        createResult.error ||
-        `Error creating session in ${storageProvider}`,
+  let fileExists = false;
+  let existingCsvContent = "";
+
+  if (isPatchMode) {
+    // Verificar si el archivo ya existe y obtener contenido
+    const fileName = `${experimentID}_${sessionId}.csv`;
+
+    if (storageProvider === "googledrive") {
+      // Buscar archivo en Drive
+      const searchQuery = `name='${fileName}' and '${folderIdentifier}' in parents and trashed=false`;
+      const searchResult = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(searchQuery)}`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${tokenResult.access_token}` },
+        },
+      );
+
+      const searchData = await searchResult.json();
+      if (searchData.files && searchData.files.length > 0) {
+        fileExists = true;
+        const fileId = searchData.files[0].id;
+
+        // Descargar contenido existente
+        const downloadResult = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+          {
+            method: "GET",
+            headers: { Authorization: `Bearer ${tokenResult.access_token}` },
+          },
+        );
+
+        if (downloadResult.ok) {
+          existingCsvContent = await downloadResult.text();
+          console.log(
+            `Drive: Found existing file with ${existingCsvContent.split("\n").length} lines`,
+          );
+        }
+      }
+    } else if (storageProvider === "dropbox") {
+      // Verificar en Dropbox
+      const filePath = `${folderIdentifier}/${fileName}`;
+      const checkResult = await fetch(
+        "https://content.dropboxapi.com/2/files/download",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${tokenResult.access_token}`,
+            "Dropbox-API-Arg": JSON.stringify({ path: filePath }),
+          },
+        },
+      );
+
+      if (checkResult.status === 200) {
+        fileExists = true;
+        existingCsvContent = await checkResult.text();
+        console.log(
+          `Dropbox: Found existing file with ${existingCsvContent.split("\n").length} lines`,
+        );
+      }
+    }
+
+    // Si existe, concatenar nuevo CSV (sin headers duplicados)
+    if (fileExists && existingCsvContent) {
+      const existingLines = existingCsvContent.split("\n");
+      const newLines = finalCsv.split("\n");
+
+      // Saltar header del nuevo CSV (primera línea)
+      const dataLines = newLines.slice(1);
+
+      // Concatenar: contenido existente + nuevas líneas de datos
+      finalCsv = existingLines.join("\n") + "\n" + dataLines.join("\n");
+
+      console.log(
+        `PATCH mode: Appended ${dataLines.length} new lines to existing ${existingLines.length} lines`,
+      );
+    } else {
+      // No existe: crear archivo nuevo
+      const createResult = await createSession(
+        storageProvider,
+        tokenResult.access_token,
+        folderIdentifier,
+        experimentID,
+        sessionId,
+      );
+
+      if (!createResult.success && createResult.errorCode !== 409) {
+        throw new Error(
+          createResult.errorText ||
+            createResult.error ||
+            `Error creating session in ${storageProvider}`,
+        );
+      }
+
+      console.log(`PATCH mode: Created new file for session ${sessionId}`);
+    }
+  } else {
+    // Modo normal: crear sesión si no existe
+    const createResult = await createSession(
+      storageProvider,
+      tokenResult.access_token,
+      folderIdentifier,
+      experimentID,
+      sessionId,
     );
+
+    // Si la sesión ya existe (409), continuamos de todas formas
+    if (
+      !createResult.success &&
+      createResult.errorCode !== 409 &&
+      createResult.error !== "Session already exists"
+    ) {
+      throw new Error(
+        createResult.errorText ||
+          createResult.error ||
+          `Error creating session in ${storageProvider}`,
+      );
+    }
   }
 
   // Enviar el CSV final al storage
@@ -816,17 +926,35 @@ export async function finalizeSession(experimentID, sessionId) {
     );
   }
 
-  console.log(`All results sent to ${storageProvider}, cleaning up Firestore`);
+  console.log(
+    `All results sent to ${storageProvider}`,
+    fileExists ? "(PATCH to existing file)" : "(new file)",
+  );
 
-  // Limpiar los datos temporales de Firestore
-  await session_ref.delete();
+  // Limpiar los datos temporales de Firestore (documento de sesión + subcolección trials)
+  // Primero borrar todos los trials de la subcolección
+  const trialsSnapshot = await session_ref.collection("trials").get();
+  const batch = db.batch();
 
-  console.log("Session finished and cleaned up successfully");
+  trialsSnapshot.docs.forEach((doc) => {
+    batch.delete(doc.ref);
+  });
+
+  // Luego borrar el documento de la sesión
+  batch.delete(session_ref);
+
+  await batch.commit();
+
+  console.log(
+    `Session ${sessionId} finished and cleaned up successfully (${trialsSnapshot.size} trials deleted)`,
+  );
 
   return {
     success: true,
     message: "Session finished successfully",
     resultsSent: results.length,
+    fileExists: fileExists,
+    patchMode: isPatchMode,
   };
 }
 
@@ -853,23 +981,217 @@ export const finalizeDisconnectedSessions = onValueWritten(
       return null;
     }
 
-    // SOLO procesar si needsFinalization está en true
+    const experimentID = event.params.experimentID;
+    const sessionId = event.params.sessionId;
+    const wasConnected = beforeData?.connected === true;
+    const isNowDisconnected = afterData.connected === false;
+    const useIndexedDB = afterData.useIndexedDB !== false; // Por defecto true
+
+    // CASO 1: Sesión SIN IndexedDB - manejar según storage provider (SIEMPRE con retoma)
+    if (isNowDisconnected && wasConnected && !useIndexedDB) {
+      const state = afterData.state;
+      const storageProvider = afterData.storageProvider || "googledrive";
+
+      // Si se desconectó pero NO finalizó
+      if (state === "disconnected" && !afterData.finished) {
+        console.log(
+          `Session ${sessionId} disconnected without IndexedDB. Provider: ${storageProvider}`,
+        );
+
+        if (storageProvider === "osf") {
+          // OSF: Iniciar contador de timeout
+          console.log(
+            `OSF provider: Starting timeout for session ${sessionId}...`,
+          );
+
+          const timeoutMinutes = afterData.resumeTimeoutMinutes || 30;
+          const timeoutMs = timeoutMinutes * 60 * 1000;
+          const expiresAt = Date.now() + timeoutMs;
+
+          await event.data.after.ref.update({
+            resumeExpiresAt: expiresAt,
+            resumeTimeoutStarted: Date.now(),
+          });
+
+          // Programar limpieza después del timeout
+          setTimeout(async () => {
+            const currentSnapshot = await event.data.after.ref.once("value");
+            const currentData = currentSnapshot.val();
+
+            if (!currentData) return;
+
+            // Si sigue desconectada y no se reconectó, enviar a OSF y limpiar
+            if (
+              currentData.connected === false &&
+              currentData.state === "disconnected"
+            ) {
+              console.log(
+                `OSF session ${sessionId} timeout expired. Sending to OSF and cleaning up...`,
+              );
+
+              try {
+                // Enviar a OSF y eliminar de Firestore
+                await finalizeSession(experimentID, sessionId);
+
+                await event.data.after.ref.update({
+                  state: "expired",
+                  finalizationProcessed: true,
+                  expiredAt: Date.now(),
+                });
+              } catch (err) {
+                console.error(
+                  `Error finalizing OSF session ${sessionId}:`,
+                  err,
+                );
+              }
+            }
+          }, timeoutMs);
+        } else {
+          // Drive/Dropbox: PATCH inmediato al desconectar
+          console.log(
+            `${storageProvider} provider: Sending PATCH immediately for session ${sessionId}...`,
+          );
+
+          try {
+            // Enviar lo acumulado hasta ahora (PATCH o CREATE si no existe)
+            // finalizeSession ya limpia Firestore automáticamente
+            await finalizeSession(experimentID, sessionId);
+
+            await event.data.after.ref.update({
+              state: "partially_saved",
+              lastPatchAt: Date.now(),
+              finalizationProcessed: false, // Permitir otro envío si retoma
+            });
+
+            console.log(
+              `Session ${sessionId} data sent to ${storageProvider} and Firestore cleaned`,
+            );
+          } catch (err) {
+            console.error(`Error sending PATCH for ${sessionId}:`, err);
+
+            // Marcar error pero no bloquear retoma
+            await event.data.after.ref.update({
+              lastPatchError: err.message,
+              lastPatchErrorAt: Date.now(),
+            });
+          }
+        }
+
+        return null;
+      }
+
+      // Si se reconectó (OSF), cancelar timeout
+      if (
+        afterData.connected === true &&
+        beforeData?.connected === false &&
+        storageProvider === "osf"
+      ) {
+        console.log(`OSF session ${sessionId} reconnected. Canceling timeout.`);
+
+        await event.data.after.ref.update({
+          state: "resumed",
+          resumedAt: Date.now(),
+          resumeExpiresAt: null,
+          resumeTimeoutStarted: null,
+        });
+
+        return null;
+      }
+    }
+
+    // CASO 2: Sesión CON IndexedDB - manejar timeout (SIEMPRE con retoma)
+    if (isNowDisconnected && wasConnected && useIndexedDB) {
+      const state = afterData.state;
+
+      // Si se desconectó pero NO finalizó, iniciar contador de timeout
+      if (state === "disconnected" && !afterData.finished) {
+        console.log(
+          `Session ${sessionId} disconnected with resume enabled (IndexedDB). Starting timeout...`,
+        );
+
+        // Calcular tiempo de expiración
+        const timeoutMinutes = afterData.resumeTimeoutMinutes || 30;
+        const timeoutMs = timeoutMinutes * 60 * 1000;
+        const expiresAt = Date.now() + timeoutMs;
+
+        // Actualizar con tiempo de expiración
+        await event.data.after.ref.update({
+          resumeExpiresAt: expiresAt,
+          resumeTimeoutStarted: Date.now(),
+        });
+
+        // Programar limpieza después del timeout
+        setTimeout(async () => {
+          // Verificar si la sesión sigue desconectada
+          const currentSnapshot = await event.data.after.ref.once("value");
+          const currentData = currentSnapshot.val();
+
+          if (!currentData) return; // Ya fue eliminada
+
+          // Si sigue desconectada y no se reconectó, limpiar
+          if (
+            currentData.connected === false &&
+            currentData.state === "disconnected"
+          ) {
+            console.log(`Session ${sessionId} timeout expired. Cleaning up...`);
+
+            // Eliminar datos de Firestore
+            try {
+              const session_ref = db
+                .collection("experiments")
+                .doc(experimentID)
+                .collection("sessions")
+                .doc(sessionId);
+
+              await session_ref.delete();
+              console.log(
+                `Firestore data deleted for expired session ${sessionId}`,
+              );
+            } catch (err) {
+              console.error(
+                `Error deleting Firestore data for ${sessionId}:`,
+                err,
+              );
+            }
+
+            // Marcar en Realtime DB como expirado y procesado
+            await event.data.after.ref.update({
+              state: "expired",
+              finalizationProcessed: true,
+              expiredAt: Date.now(),
+            });
+          }
+        }, timeoutMs);
+
+        return null;
+      }
+
+      // Si se reconectó, cancelar timeout
+      if (afterData.connected === true && beforeData?.connected === false) {
+        console.log(`Session ${sessionId} reconnected. Canceling timeout.`);
+
+        await event.data.after.ref.update({
+          state: "resumed",
+          resumedAt: Date.now(),
+          resumeExpiresAt: null,
+          resumeTimeoutStarted: null,
+        });
+
+        return null;
+      }
+    }
+
+    // CASO 3: Finalización normal
+    // Solo procesar si needsFinalization está en true
     if (afterData.needsFinalization !== true) {
       return null;
     }
 
     // IMPORTANTE: Solo procesar si cambió de connected=true a connected=false
-    // Esto garantiza que es una desconexión/finalización real
-    const wasConnected = beforeData?.connected === true;
-    const isNowDisconnected = afterData.connected === false;
-
     if (!wasConnected || !isNowDisconnected) {
-      // No es una transición de conectado a desconectado, salir
       return null;
     }
 
-    const experimentID = event.params.experimentID;
-    const sessionId = event.params.sessionId;
     const isAbandoned = afterData.state === "abandoned";
 
     console.log(
@@ -884,16 +1206,6 @@ export const finalizeDisconnectedSessions = onValueWritten(
     try {
       // Si fue abandonado, guardar estado en db.json local
       if (isAbandoned && afterData.metadata) {
-        // Llamar endpoint para persistir metadata con estado abandoned
-        const https = await import("https");
-        const postData = JSON.stringify({
-          sessionId: sessionId,
-          metadata: afterData.metadata,
-          state: "abandoned",
-        });
-
-        // Este endpoint debe estar accesible desde Cloud Functions
-        // Por ahora solo lo registramos en logs
         console.log(
           `Session ${sessionId} marked as abandoned with metadata:`,
           afterData.metadata,

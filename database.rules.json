@@ -4,35 +4,8 @@
       "$experimentID": {
         "$sessionId": {
           ".read": false,
-          ".write": "!data.exists() || (!data.child('finalizationProcessed').exists() && data.child('experimentID').val() == $experimentID && data.child('sessionId').val() == $sessionId)",
-          ".validate": "newData.hasChildren(['connected', 'experimentID', 'sessionId', 'storage']) && newData.child('experimentID').val() == $experimentID && newData.child('sessionId').val() == $sessionId",
-          "connected": {
-            ".validate": "newData.isBoolean()"
-          },
-          "experimentID": {
-            ".validate": "newData.isString() && newData.val() == $experimentID"
-          },
-          "sessionId": {
-            ".validate": "newData.isString() && newData.val() == $sessionId"
-          },
-          "storage": {
-            ".validate": "newData.isString() && (newData.val() == 'firebase' || newData.val() == 'google-drive' || newData.val() == 'dropbox' || newData.val() == 'osf' || newData.val() == 'github')"
-          },
-          "state": {
-            ".validate": "newData.isString() && (newData.val() == 'initiated' || newData.val() == 'in-progress' || newData.val() == 'completed' || newData.val() == 'abandoned')"
-          },
-          "needsFinalization": {
-            ".validate": "newData.isBoolean()"
-          },
-          "finished": {
-            ".validate": "newData.isBoolean()"
-          },
-          "finalizationProcessed": {
-            ".validate": "newData.isBoolean()"
-          },
-          "$other": {
-            ".validate": true
-          }
+          ".write": "!data.child('finished').exists() || data.child('finished').val() == false",
+          ".validate": "newData.hasChildren(['connected', 'experimentID', 'sessionId'])"
         }
       }
     }

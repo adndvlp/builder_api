@@ -7,7 +7,13 @@ export default async function writeLog(experimentID, action) {
     if (action === "saveData") {
       await log_doc_ref.set(
         { saveData: FieldValue.increment(1) },
-        { merge: true }
+        { merge: true },
+      );
+    }
+    if (action === "getCondition") {
+      await log_doc_ref.set(
+        { getCondition: FieldValue.increment(1) },
+        { merge: true },
       );
     }
     return true;

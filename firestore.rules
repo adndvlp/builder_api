@@ -10,15 +10,20 @@ service cloud.firestore {
     }
     match /experiments/{experimentId} {
       function verifyFields(){
-        return request.resource.data.keys().hasOnly(['active', 'id', 'owner', 'title', 'sessions', 'useValidation', 'allowJSON', 'allowCSV', 'requiredFields', 'maxSessions', 'limitSessions'])
+        return request.resource.data.keys().hasOnly(['active', 'id', 'owner', 'title', 'sessions', 'useValidation', 'allowJSON', 'allowCSV', 'requiredFields', 'maxSessions', 'limitSessions', 'activeConditionAssignment', 'nConditions', 'currentCondition', 'batchConfig'])
+      }
+      function isOwner(){
+        return request.auth.uid == resource.data.owner;
       }
       allow read: if(request.auth.uid != null) &&
         resource.data.owner == request.auth.uid;
       allow create: if(request.auth.uid != null) &&
        verifyFields() &&
         request.resource.data.owner == request.auth.uid;
-      allow update: if(request.auth.uid == resource.data.owner) &&
-       verifyFields();
+      allow update: if isOwner() && (
+        verifyFields() ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['batchConfig']))
+      );
       allow delete: if(request.auth.uid == resource.data.owner);
     }
   }

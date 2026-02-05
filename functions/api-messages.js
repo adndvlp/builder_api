@@ -61,6 +61,15 @@ const MESSAGES = {
     message:
       "The maximum number of sessions for this experiment has been reached",
   },
+  CONDITION_ASSIGNMENT_NOT_ACTIVE: {
+    error: "CONDITION_ASSIGNMENT_NOT_ACTIVE",
+    message: "Condition assignment is not active for this experiment",
+  },
+  UNKNOWN_ERROR_GETTING_CONDITION: {
+    error: "UNKNOWN_ERROR_GETTING_CONDITION",
+    message:
+      "An unknown error occurred while getting the condition for this experiment",
+  },
   SUCCESS: {
     message: "Success",
   },

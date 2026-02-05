@@ -67,7 +67,7 @@ async function getGithubOwner(accessToken) {
 
   if (!userResponse.ok) {
     throw new Error(
-      userData.message || "Error getting GitHub user information"
+      userData.message || "Error getting GitHub user information",
     );
   }
 
@@ -119,7 +119,7 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
       "Publishing experiment to GitHub for user:",
       uid,
       "repo:",
-      repoName
+      repoName,
     );
 
     // Verificar si el experimento existe en Firestore
@@ -137,13 +137,13 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
             experimentID,
             repoName,
             uid,
-            provider
+            provider,
           );
           console.log("Experiment created in Firestore:", createResult);
         } catch (createError) {
           console.warn(
             "Warning: Could not create experiment in Firestore:",
-            createError.message
+            createError.message,
           );
           // No detener la publicación, solo advertir
         }
@@ -157,7 +157,7 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
 
         if (currentProvider !== newProvider) {
           console.log(
-            `Updating storage provider from ${currentProvider} to ${newProvider}`
+            `Updating storage provider from ${currentProvider} to ${newProvider}`,
           );
 
           try {
@@ -168,12 +168,54 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
 
             // Crear la nueva carpeta en el nuevo storage
             const tokenResult = await getValidToken(newProvider, uid);
+            console.log(
+              `[PROVIDER CHANGE] Token result for ${newProvider}:`,
+              tokenResult.success,
+            );
+
             if (tokenResult.success) {
-              const folderPath = `/ExpBuilder/${repoName}`;
+              let folderPath = `/ExpBuilder/${repoName}`;
+              let componentName = repoName;
+
+              // Para OSF, obtener projectId del usuario
+              if (newProvider === "osf") {
+                console.log(
+                  `[PROVIDER CHANGE] OSF detected, fetching user data for uid: ${uid}`,
+                );
+                const userDoc = await db.collection("users").doc(uid).get();
+                if (!userDoc.exists) {
+                  console.error(
+                    `[PROVIDER CHANGE] User document not found for uid: ${uid}`,
+                  );
+                } else {
+                  const userData = userDoc.data();
+                  console.log(
+                    `[PROVIDER CHANGE] User osfProjectId: ${userData?.osfProjectId}`,
+                  );
+                  if (userData?.osfProjectId) {
+                    folderPath = userData.osfProjectId;
+                  } else {
+                    console.error(
+                      `[PROVIDER CHANGE] User has no osfProjectId!`,
+                    );
+                  }
+                }
+              }
+
+              console.log(
+                `[PROVIDER CHANGE] Calling createFolder with provider=${newProvider}, folderPath=${folderPath}, componentName=${componentName}`,
+              );
+
               const folderResult = await createFolder(
                 newProvider,
                 tokenResult.access_token,
-                folderPath
+                folderPath,
+                componentName,
+              );
+
+              console.log(
+                `[PROVIDER CHANGE] createFolder result:`,
+                JSON.stringify(folderResult),
               );
 
               if (folderResult.success) {
@@ -184,22 +226,43 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
                 if (newProvider === "googledrive") {
                   updateFields.driveFolderPath = folderPath;
                   updateFields.driveFolderId = folderResult.folderId;
+                  console.log(
+                    `[PROVIDER CHANGE] Updating Drive fields:`,
+                    updateFields,
+                  );
                 } else if (newProvider === "dropbox") {
                   updateFields.dropboxFolder = folderPath;
+                  console.log(
+                    `[PROVIDER CHANGE] Updating Dropbox fields:`,
+                    updateFields,
+                  );
+                } else if (newProvider === "osf") {
+                  updateFields.osfComponentId = folderResult.componentId;
+                  updateFields.osfUploadLink = folderResult.uploadLink;
+                  console.log(
+                    `[PROVIDER CHANGE] Updating OSF fields:`,
+                    updateFields,
+                  );
                 }
 
                 await experimentRef.update(updateFields);
+                console.log(`[PROVIDER CHANGE] Firestore updated successfully`);
               } else {
                 console.warn(
                   `Warning: Could not create folder in ${newProvider}:`,
-                  folderResult.errorText
+                  folderResult.errorText,
                 );
               }
+            } else {
+              console.error(
+                `[PROVIDER CHANGE] Failed to get valid token for ${newProvider}:`,
+                tokenResult.error,
+              );
             }
           } catch (updateError) {
             console.warn(
               "Warning: Could not update storage provider:",
-              updateError.message
+              updateError.message,
             );
           }
         }
@@ -224,7 +287,7 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
     const repoInfoResult = await getRepositoryInfo(
       accessToken,
       owner,
-      repoName
+      repoName,
     );
 
     let repoExists = repoInfoResult.success;
@@ -236,7 +299,7 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
         accessToken,
         repoName,
         isPrivate,
-        description
+        description,
       );
 
       if (!createRepoResult.success) {
@@ -260,7 +323,7 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
       repoName,
       "index.html",
       htmlContent,
-      repoExists ? "Update experiment HTML" : "Add experiment HTML file"
+      repoExists ? "Update experiment HTML" : "Add experiment HTML file",
     );
 
     if (!uploadHtmlResult.success) {
@@ -299,13 +362,13 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
           repoName,
           filePath,
           fileContent,
-          `Upload ${file.type} file: ${file.filename}`
+          `Upload ${file.type} file: ${file.filename}`,
         );
 
         if (!uploadResult.success) {
           console.warn(
             `Error uploading media file ${file.filename}:`,
-            uploadResult.errorText
+            uploadResult.errorText,
           );
         } else {
           console.log(`Media file uploaded: ${filePath}`);
@@ -320,7 +383,7 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
       owner,
       repoName,
       "main",
-      "/"
+      "/",
     );
 
     let pagesUrl;
@@ -332,7 +395,7 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
       pagesUrl = `https://${owner}.github.io/${repoName}/`;
       console.warn(
         "Could not verify GitHub Pages, using estimated URL:",
-        pagesUrl
+        pagesUrl,
       );
     }
 
