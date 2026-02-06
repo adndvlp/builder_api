@@ -1,4 +1,4 @@
-import { db } from "./app.js";
+import { db } from "../../app.js";
 import { FieldValue } from "firebase-admin/firestore";
 
 export default async function writeLog(experimentID, action) {

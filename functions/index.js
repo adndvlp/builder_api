@@ -2,15 +2,15 @@ import {
   apiData,
   apiDataComplete,
   finalizeDisconnectedSessions,
-} from "./routes/data.js";
-import { apiDeleteExperiment } from "./routes/experiments.js";
-import { apiCondition } from "./api-condition.js";
-import { dropboxOAuthCallback } from "./api-dropbox.js";
-import { githubOAuthCallback } from "./api-github.js";
-import { publishExperiment } from "./routes/github.js";
-import { googleDriveOAuthCallback } from "./api-google-drive.js";
-import { osfManage } from "./api-osf.js";
-import { osfOAuthCallback } from "./api-osf-oauth.js";
+} from "./experiment/sessions/index.js";
+import { publishExperiment } from "./experiment/index.js";
+import { apiDeleteExperiment } from "./experiment/index.js";
+import { apiCondition } from "./experiment/api-condition.js";
+import { dropboxOAuthCallback } from "./oauth/callbacks/dropbox.js";
+import { githubOAuthCallback } from "./oauth/callbacks/github.js";
+import { googleDriveOAuthCallback } from "./oauth/callbacks/google-drive.js";
+import { osfOAuthCallback } from "./oauth/callbacks/osf.js";
+import { osfManage } from "./oauth/osf-token.js";
 import { setGlobalOptions } from "firebase-functions/v2";
 
 setGlobalOptions({

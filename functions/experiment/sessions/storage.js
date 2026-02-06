@@ -119,6 +119,60 @@ export async function createFolder(
       // Para OSF, folderPath es el projectId y creamos un componente de datos
       const projectId = folderPath;
 
+      // Primero, verificar si ya existe un componente con este nombre
+      console.log(
+        `OSF: Checking for existing component with name "${componentName}"`,
+      );
+
+      const listResponse = await fetch(
+        `https://api.osf.io/v2/nodes/${projectId}/children/`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      if (listResponse.ok) {
+        const listData = await listResponse.json();
+        const existingComponent = listData.data.find(
+          (node) => node.attributes.title === componentName,
+        );
+
+        if (existingComponent) {
+          console.log(
+            `OSF: Found existing component with id ${existingComponent.id}`,
+          );
+
+          // Obtener el enlace de subida de archivos del componente existente
+          const filesLink =
+            existingComponent.relationships.files.links.related.href;
+          const filesResponse = await fetch(filesLink, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+          });
+
+          const filesData = await filesResponse.json();
+          const uploadLink = filesData.data[0].links.upload;
+
+          return {
+            success: true,
+            componentId: existingComponent.id,
+            uploadLink: uploadLink,
+            alreadyExists: true,
+            message: "OSF component already exists, reusing it",
+          };
+        }
+      }
+
+      // No existe, crear componente nuevo
+      console.log(`OSF: Creating new component with name "${componentName}"`);
+
       const createResponse = await fetch(
         `https://api.osf.io/v2/nodes/${projectId}/children/?region=us`,
         {
@@ -488,6 +542,8 @@ export async function appendResult(
   const fileName = `${experimentID}_${sessionId}.csv`;
 
   if (provider === "dropbox") {
+    // Dropbox con mode: "overwrite" crea el archivo si no existe
+    // o lo sobrescribe si ya existe (batch=0 mode - igual que OSF)
     const filePath = `${folderIdentifier}/${fileName}`;
 
     const uploadResult = await fetch(
@@ -498,7 +554,7 @@ export async function appendResult(
           Authorization: `Bearer ${token}`,
           "Dropbox-API-Arg": JSON.stringify({
             path: filePath,
-            mode: "overwrite",
+            mode: "overwrite", // Crea si no existe, sobrescribe si existe
             autorename: false,
             mute: false,
           }),
@@ -520,7 +576,7 @@ export async function appendResult(
     const result = await uploadResult.json();
     return { success: true, id: result.id, participantNumber: 1 };
   } else if (provider === "googledrive") {
-    // Buscar el archivo
+    // Buscar el archivo existente
     const searchQuery = `name='${fileName}' and '${folderIdentifier}' in parents and trashed=false`;
     const searchResult = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
@@ -533,17 +589,52 @@ export async function appendResult(
     );
 
     const searchData = await searchResult.json();
+
     if (!searchData.files || searchData.files.length === 0) {
-      return {
-        success: false,
-        errorText: "Session not found",
-        errorCode: 404,
+      // Archivo no existe, crearlo (batch=0 mode - igual que OSF)
+      console.log(`Drive: Creating new file ${fileName} (batch=0 mode)`);
+
+      const metadata = {
+        name: fileName,
+        mimeType: "text/csv",
+        parents: [folderIdentifier],
       };
+
+      const createResponse = await fetch(
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "multipart/related; boundary=foo_bar_baz",
+          },
+          body:
+            "--foo_bar_baz\r\n" +
+            "Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+            JSON.stringify(metadata) +
+            "\r\n--foo_bar_baz\r\n" +
+            "Content-Type: text/csv\r\n\r\n" +
+            csvContent +
+            "\r\n--foo_bar_baz--",
+        },
+      );
+
+      if (!createResponse.ok) {
+        const result = await createResponse.json();
+        return {
+          success: false,
+          errorText: result.error?.message || "Error creating file",
+          errorCode: createResponse.status,
+        };
+      }
+
+      const createResult = await createResponse.json();
+      return { success: true, id: createResult.id, participantNumber: 1 };
     }
 
     const fileId = searchData.files[0].id;
 
-    // Actualizar el archivo
+    // Archivo existe, actualizarlo (PATCH mode para batch>0)
     const uploadResult = await fetch(
       `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
       {

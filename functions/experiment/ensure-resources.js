@@ -1,4 +1,4 @@
-import { createFolder } from "./services/storage.js";
+import { createFolder } from "./sessions/storage.js";
 import {
   createRepositoryGithub,
   getRepositoryInfo,
@@ -33,7 +33,7 @@ export async function ensureResourcesExist({
     const folderResult = await createFolder(
       "googledrive",
       driveToken,
-      folderPath
+      folderPath,
     );
     if (folderResult.success) {
       driveFolderCreated = !folderResult.message?.includes("already exists");
@@ -50,7 +50,7 @@ export async function ensureResourcesExist({
     const repoInfo = await getRepositoryInfo(
       githubToken,
       githubOwner,
-      repoName
+      repoName,
     );
     if (repoInfo.success) {
       repoUrl = repoInfo.repo.url;

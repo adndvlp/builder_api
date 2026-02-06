@@ -295,7 +295,61 @@ async function handleCreateComponent(req, res) {
     });
   }
 
-  // Crear el componente de datos en OSF
+  // Primero, verificar si ya existe un componente con este nombre
+  console.log(
+    `OSF: Checking for existing component with name "${componentName}"`,
+  );
+
+  const listResponse = await fetch(
+    `https://api.osf.io/v2/nodes/${projectId}/children/`,
+    {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+
+  if (listResponse.ok) {
+    const listData = await listResponse.json();
+    const existingComponent = listData.data.find(
+      (node) => node.attributes.title === componentName,
+    );
+
+    if (existingComponent) {
+      console.log(
+        `OSF: Found existing component with id ${existingComponent.id}`,
+      );
+
+      // Obtener el enlace de subida de archivos del componente existente
+      const filesLink =
+        existingComponent.relationships.files.links.related.href;
+      const filesResponse = await fetch(filesLink, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const filesData = await filesResponse.json();
+      const uploadLink = filesData.data[0].links.upload;
+
+      return res.status(200).json({
+        success: true,
+        message: "OSF data component already exists, reusing it",
+        componentId: existingComponent.id,
+        uploadLink: uploadLink,
+        componentUrl: `https://osf.io/${existingComponent.id}`,
+        alreadyExists: true,
+      });
+    }
+  }
+
+  // No existe, crear el componente de datos en OSF
+  console.log(`OSF: Creating new component with name "${componentName}"`);
+
   const createResponse = await fetch(
     `https://api.osf.io/v2/nodes/${projectId}/children/?region=${region}`,
     {

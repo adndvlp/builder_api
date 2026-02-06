@@ -25,7 +25,9 @@
     "node-fetch": "^3.2.10"
   },
   "devDependencies": {
-    "firebase-functions-test": "^3.0.0"
+    "@eslint/js": "^9.39.2",
+    "firebase-functions-test": "^3.0.0",
+    "globals": "^17.3.0"
   },
   "private": true
 }

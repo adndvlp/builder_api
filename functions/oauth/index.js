@@ -1,6 +1,6 @@
 import fetch from "node-fetch";
 import { db } from "../app.js";
-import { refreshOSFToken } from "../api-osf-oauth.js";
+import { refreshOSFToken } from "./callbacks/osf.js";
 
 // Configuración de proveedores OAuth
 const OAUTH_CONFIGS = {

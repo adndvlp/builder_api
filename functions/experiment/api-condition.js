@@ -1,7 +1,7 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { db } from "./app.js";
-import writeLog from "./write-log.js";
-import MESSAGES from "./api-messages.js";
+import { db } from "../app.js";
+import writeLog from "./sessions/write-log.js";
+import MESSAGES from "../api-messages.js";
 
 export const apiCondition = onRequest({ cors: true }, async (req, res) => {
   const { experimentID } = req.body;
