@@ -10,7 +10,7 @@ service cloud.firestore {
     }
     match /experiments/{experimentId} {
       function verifyFields(){
-        return request.resource.data.keys().hasOnly(['active', 'id', 'owner', 'title', 'sessions', 'useValidation', 'allowJSON', 'allowCSV', 'requiredFields', 'maxSessions', 'limitSessions', 'activeConditionAssignment', 'nConditions', 'currentCondition', 'batchConfig'])
+        return request.resource.data.keys().hasOnly(['active', 'id', 'owner', 'title', 'sessions', 'useValidation', 'allowJSON', 'allowCSV', 'requiredFields', 'maxSessions', 'limitSessions', 'activeConditionAssignment', 'nConditions', 'currentCondition', 'batchConfig', 'recruitmentConfig'])
       }
       function isOwner(){
         return request.auth.uid == resource.data.owner;
@@ -22,7 +22,7 @@ service cloud.firestore {
         request.resource.data.owner == request.auth.uid;
       allow update: if isOwner() && (
         verifyFields() ||
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['batchConfig']))
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['batchConfig', 'recruitmentConfig']))
       );
       allow delete: if(request.auth.uid == resource.data.owner);
     }
