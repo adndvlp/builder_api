@@ -2,7 +2,7 @@ import { onRequest } from "firebase-functions/v2/https";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "../app.js";
 import writeLog from "./sessions/write-log.js";
-import { createFolder, deleteFolder } from "./sessions/storage.js";
+import { createFolder, deleteFolder } from "./sessions/services/folder.js";
 import { getValidToken } from "../oauth/index.js";
 import { deleteRepositoryGithub } from "./hosting/services.js";
 import fetch from "node-fetch";
@@ -254,49 +254,6 @@ export async function deleteExperiment(experimentID, uid, repoName = null) {
     ...(repoError && { repoWarning: repoError }),
   };
 }
-
-/**
- * Endpoint HTTP para crear un experimento
- */
-export const apiCreateExperiment = onRequest(
-  { cors: true },
-  async (req, res) => {
-    const { experimentID, experimentName, uid, storageProvider } = req.body;
-
-    if (!experimentID || !experimentName) {
-      res.status(400).json({
-        success: false,
-        message: "Missing required parameters: experimentID or experimentName",
-      });
-      return;
-    }
-
-    // Validar storageProvider
-    const provider = storageProvider || "googledrive";
-    if (!["dropbox", "googledrive"].includes(provider)) {
-      res.status(400).json({
-        success: false,
-        message: "Invalid storageProvider. Must be 'dropbox' or 'googledrive'",
-      });
-      return;
-    }
-
-    try {
-      const result = await createExperiment(
-        experimentID,
-        experimentName,
-        uid,
-        provider,
-      );
-      res.status(201).json(result);
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: `Internal server error: ${error.message}`,
-      });
-    }
-  },
-);
 
 /**
  * Endpoint HTTP para eliminar un experimento
