@@ -222,7 +222,41 @@ export async function appendResult(
     }
 
     const result = await uploadResult.json();
-    return { success: true, id: result.id, participantNumber: 1 };
+
+    // Get a shareable Dropbox link for the file
+    let fileUrl = null;
+    try {
+      const shareRes = await fetch(
+        "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ path: filePath }),
+        },
+      );
+      const shareData = await shareRes.json();
+      if (shareRes.status === 200) {
+        fileUrl = shareData.url;
+      } else if (
+        shareRes.status === 409 &&
+        shareData?.shared_link_already_exists?.metadata?.url
+      ) {
+        fileUrl = shareData.shared_link_already_exists.metadata.url;
+      }
+    } catch (_) {
+      // sharing link is optional
+    }
+
+    return {
+      success: true,
+      id: result.id,
+      filePath,
+      fileUrl,
+      participantNumber: 1,
+    };
   } else if (provider === "googledrive") {
     // Buscar el archivo existente
     const searchQuery = `name='${fileName}' and '${folderIdentifier}' in parents and trashed=false`;
@@ -309,6 +343,13 @@ export async function appendResult(
     // Para OSF, necesitamos eliminar el archivo existente (si existe) y crear uno nuevo
     // OSF no permite sobrescribir archivos
     const uploadLink = folderIdentifier;
+    if (!uploadLink) {
+      return {
+        success: false,
+        errorText:
+          "OSF upload link is not configured. Please update the experiment settings.",
+      };
+    }
 
     // Primero, intentar encontrar y eliminar el archivo existente
     try {
@@ -375,7 +416,12 @@ export async function appendResult(
     }
 
     const result = await uploadResult.json();
-    return { success: true, id: result.data?.id, participantNumber: 1 };
+    return {
+      success: true,
+      id: result.data?.id,
+      fileUrl: result.data?.links?.download || null,
+      participantNumber: 1,
+    };
   }
 
   return { success: false, errorText: "Unknown provider" };

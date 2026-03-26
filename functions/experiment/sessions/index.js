@@ -195,7 +195,10 @@ export const apiDataComplete = onRequest({ cors: true }, async (req, res) => {
         ? exp_data.driveFolderId
         : storageProvider === "dropbox"
           ? exp_data.dropboxFolder
-          : exp_data.osfUploadLink;
+          : exp_data.osfUploadLink ||
+            (exp_data.osfComponentId
+              ? `https://files.osf.io/v1/resources/${exp_data.osfComponentId}/providers/osfstorage/`
+              : null);
 
     // Con batch=0, NO crear sesión para NINGÚN proveedor
     // El CSV completo se envía directo sin archivo vacío previo
@@ -223,6 +226,36 @@ export const apiDataComplete = onRequest({ cors: true }, async (req, res) => {
     }
 
     console.log(`Complete experiment saved to ${storageProvider} successfully`);
+
+    // Guardar metadata con link de archivo en Firestore
+    try {
+      const fileUrl =
+        storageProvider === "googledrive" && appendResult_.id
+          ? `https://drive.google.com/uc?export=download&id=${appendResult_.id}`
+          : (storageProvider === "dropbox" || storageProvider === "osf") &&
+              appendResult_.fileUrl
+            ? appendResult_.fileUrl
+            : null;
+      await db
+        .collection("experiments")
+        .doc(experimentID)
+        .collection("session_metadata")
+        .doc(sessionId)
+        .set(
+          {
+            sessionId,
+            completedAt: new Date().toISOString(),
+            storageProvider,
+            ...(fileUrl && { fileUrl }),
+          },
+          { merge: true },
+        );
+    } catch (metaErr) {
+      console.error(
+        "Error saving session_metadata in apiDataComplete:",
+        metaErr,
+      );
+    }
 
     res.status(201).json({
       success: true,
@@ -301,7 +334,10 @@ async function handlePostFile(req, res, experimentID, data, filename) {
       ? exp_data.driveFolderId
       : storageProvider === "dropbox"
         ? exp_data.dropboxFolder
-        : exp_data.osfUploadLink;
+        : exp_data.osfUploadLink ||
+          (exp_data.osfComponentId
+            ? `https://files.osf.io/v1/resources/${exp_data.osfComponentId}/providers/osfstorage/`
+            : null);
 
   const result = await postFile(
     storageProvider,
@@ -493,7 +529,10 @@ export async function finalizeSession(experimentID, sessionId) {
       ? exp_data.driveFolderId
       : storageProvider === "dropbox"
         ? exp_data.dropboxFolder
-        : exp_data.osfUploadLink;
+        : exp_data.osfUploadLink ||
+          (exp_data.osfComponentId
+            ? `https://files.osf.io/v1/resources/${exp_data.osfComponentId}/providers/osfstorage/`
+            : null);
 
   // Determinar si debe usar PATCH o CREATE+APPEND
   // Drive y Dropbox SIEMPRE usan PATCH (descargar → concatenar → sobrescribir)
@@ -668,12 +707,20 @@ export async function finalizeSession(experimentID, sessionId) {
       .doc(experimentID)
       .collection("session_metadata")
       .doc(sessionId);
+    const driveFileUrl =
+      storageProvider === "googledrive" && appendResult_.id
+        ? `https://drive.google.com/uc?export=download&id=${appendResult_.id}`
+        : (storageProvider === "dropbox" || storageProvider === "osf") &&
+            appendResult_.fileUrl
+          ? appendResult_.fileUrl
+          : null;
     const metaPayload = {
       sessionId,
       state: finalState,
       completedAt: new Date().toISOString(),
       createdAt: session_data.createdAt || new Date().toISOString(),
       metadata: combinedMetadata,
+      ...(driveFileUrl && { fileUrl: driveFileUrl }),
     };
     await metaDocRef.set(metaPayload);
   } catch (metaErr) {
@@ -914,19 +961,137 @@ export const finalizeDisconnectedSessions = onValueWritten(
 
       // Si la sesión ya está completada o abandonada (IndexedDB/Drive guardó los datos directamente)
       if (state === "completed" || state === "abandoned") {
+        // Intentar obtener el file URL del storage provider
+        let fileUrl = null;
+        try {
+          const expDoc = await db
+            .collection("experiments")
+            .doc(experimentID)
+            .get();
+          if (expDoc.exists) {
+            const expData = expDoc.data();
+            const provider = expData.storageProvider || "googledrive";
+            const fileName = `${experimentID}_${sessionId}.csv`;
+            const tokenResult = await getValidToken(provider, expData.owner);
+
+            if (tokenResult.success) {
+              if (provider === "googledrive" && expData.driveFolderId) {
+                const searchQuery = `name='${fileName}' and '${expData.driveFolderId}' in parents and trashed=false`;
+                const searchRes = await fetch(
+                  `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(searchQuery)}`,
+                  {
+                    headers: {
+                      Authorization: `Bearer ${tokenResult.access_token}`,
+                    },
+                  },
+                );
+                const searchData = await searchRes.json();
+                if (searchData.files && searchData.files.length > 0) {
+                  fileUrl = `https://drive.google.com/uc?export=download&id=${searchData.files[0].id}`;
+                }
+              } else if (provider === "dropbox" && expData.dropboxFolder) {
+                try {
+                  const filePath = `${expData.dropboxFolder}/${fileName}`;
+                  const listRes = await fetch(
+                    "https://api.dropboxapi.com/2/sharing/list_shared_links",
+                    {
+                      method: "POST",
+                      headers: {
+                        Authorization: `Bearer ${tokenResult.access_token}`,
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({
+                        path: filePath,
+                        direct_only: true,
+                      }),
+                    },
+                  );
+                  if (listRes.ok) {
+                    const listData = await listRes.json();
+                    fileUrl = listData.links?.[0]?.url || null;
+                  }
+                  if (!fileUrl) {
+                    const createRes = await fetch(
+                      "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings",
+                      {
+                        method: "POST",
+                        headers: {
+                          Authorization: `Bearer ${tokenResult.access_token}`,
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ path: filePath }),
+                      },
+                    );
+                    const createData = await createRes.json();
+                    if (createRes.status === 200) {
+                      fileUrl = createData.url;
+                    } else if (
+                      createRes.status === 409 &&
+                      createData?.shared_link_already_exists?.metadata?.url
+                    ) {
+                      fileUrl =
+                        createData.shared_link_already_exists.metadata.url;
+                    }
+                  }
+                } catch (dropboxErr) {
+                  console.error(
+                    "Error getting Dropbox sharing link in CASO 2:",
+                    dropboxErr,
+                  );
+                }
+              } else if (provider === "osf") {
+                const osfUploadLink =
+                  expData.osfUploadLink ||
+                  (expData.osfComponentId
+                    ? `https://files.osf.io/v1/resources/${expData.osfComponentId}/providers/osfstorage/`
+                    : null);
+                if (osfUploadLink) {
+                  const componentIdMatch = osfUploadLink.match(
+                    /\/resources\/([^/]+)\//,
+                  );
+                  if (componentIdMatch) {
+                    const componentId = componentIdMatch[1];
+                    const filesRes = await fetch(
+                      `https://api.osf.io/v2/nodes/${componentId}/files/osfstorage/`,
+                      {
+                        headers: {
+                          Authorization: `Bearer ${tokenResult.access_token}`,
+                        },
+                      },
+                    );
+                    if (filesRes.ok) {
+                      const filesData = await filesRes.json();
+                      const found = filesData.data?.find(
+                        (f) => f.attributes.name === fileName,
+                      );
+                      if (found) fileUrl = found.links?.download;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (lookupErr) {
+          console.error("Error looking up file URL in CASO 2:", lookupErr);
+        }
+
         try {
           await db
             .collection("experiments")
             .doc(experimentID)
             .collection("session_metadata")
             .doc(sessionId)
-            .set({
-              sessionId,
-              state,
-              completedAt: new Date().toISOString(),
-              metadata: afterData.metadata || {},
-              storageProvider: afterData.storageProvider || "googledrive",
-            });
+            .set(
+              {
+                sessionId,
+                state,
+                completedAt: new Date().toISOString(),
+                metadata: afterData.metadata || {},
+                storageProvider: afterData.storageProvider || "googledrive",
+                ...(fileUrl && { fileUrl }),
+              },
+              { merge: true },
+            );
         } catch (metaErr) {
           console.error("Error saving session_metadata:", metaErr);
         }

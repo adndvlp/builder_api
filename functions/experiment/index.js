@@ -242,6 +242,16 @@ export async function deleteExperiment(experimentID, uid, repoName = null) {
     }
   }
 
+  // Borrar subcolección session_metadata antes de borrar el documento padre
+  const sessionMetaSnapshot = await experimentRef
+    .collection("session_metadata")
+    .get();
+  if (!sessionMetaSnapshot.empty) {
+    const batch = db.batch();
+    sessionMetaSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+  }
+
   await experimentRef.delete();
 
   return {
