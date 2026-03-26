@@ -16,7 +16,7 @@ import {
   handleListSessions,
   handleDownloadSession,
   handleDeleteSession,
-} from "./session-handler.js";
+} from "./handler.js";
 
 /**
  * Deserializa datos desde Firestore, convirtiendo JSON strings de vuelta a arrays/objetos
@@ -77,7 +77,10 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
       const result = await finalizeSession(experimentID, sessionId);
       res.status(200).json(result);
     } catch (error) {
-      console.error("Error in finish action:", error);
+      console.error(
+        `[apiData] finish action failed: experimentID=${experimentID} sessionId=${sessionId}`,
+        error,
+      );
       handleFinalizationError(res, error);
     }
     return;
@@ -338,6 +341,7 @@ export async function finalizeSession(experimentID, sessionId) {
   const exp_doc = await exp_doc_ref.get();
 
   if (!exp_doc.exists) {
+    console.error(`[finalizeSession] EXPERIMENT_NOT_FOUND: ${experimentID}`);
     throw new Error("EXPERIMENT_NOT_FOUND");
   }
 
@@ -348,6 +352,9 @@ export async function finalizeSession(experimentID, sessionId) {
   const tokenResult = await getValidToken(storageProvider, exp_data.owner);
 
   if (!tokenResult.success) {
+    console.error(
+      `[finalizeSession] Invalid token for storageProvider=${storageProvider}`,
+    );
     throw new Error(
       storageProvider === "dropbox"
         ? "INVALID_DROPBOX_TOKEN"
@@ -355,22 +362,22 @@ export async function finalizeSession(experimentID, sessionId) {
     );
   }
 
-  console.log("Finishing session - fetching results from Firestore:", {
-    experimentID,
-    sessionId,
-  });
-
-  // Leer el estado desde Firebase Realtime Database
+  // Leer el estado y metadata desde Firebase Realtime Database
   let sessionState = null;
+  let rtdbMetadata = {};
   try {
     const rtdb = getDatabase(app);
     const sessionSnapshot = await rtdb
       .ref(`sessions/${experimentID}/${sessionId}`)
       .once("value");
     const sessionData = sessionSnapshot.val();
-    if (sessionData && sessionData.state) {
-      sessionState = sessionData.state;
-      console.log(`Session state from Realtime DB: ${sessionState}`);
+    if (sessionData) {
+      if (sessionData.state) {
+        sessionState = sessionData.state;
+      }
+      if (sessionData.metadata) {
+        rtdbMetadata = sessionData.metadata;
+      }
     }
   } catch (error) {
     console.error("Error reading state from Realtime Database:", error);
@@ -387,6 +394,9 @@ export async function finalizeSession(experimentID, sessionId) {
   const session_doc = await session_ref.get();
 
   if (!session_doc.exists) {
+    console.error(
+      `[finalizeSession] SESSION_NOT_FOUND: experiments/${experimentID}/sessions/${sessionId}`,
+    );
     throw new Error("SESSION_NOT_FOUND");
   }
 
@@ -396,6 +406,9 @@ export async function finalizeSession(experimentID, sessionId) {
   const trials_snapshot = await session_ref.collection("trials").get();
 
   if (trials_snapshot.empty) {
+    console.error(
+      `[finalizeSession] NO_RESULTS: no trials found for session ${sessionId}`,
+    );
     throw new Error("NO_RESULTS");
   }
 
@@ -643,9 +656,30 @@ export async function finalizeSession(experimentID, sessionId) {
 
   await batch.commit();
 
-  console.log(
-    `Session ${sessionId} finished and cleaned up successfully (${trialsSnapshot.size} trials deleted)`,
-  );
+  // Guardar metadata persistente en Firestore para la vista del investigador
+  try {
+    const finalState = sessionState === "abandoned" ? "abandoned" : "completed";
+    const combinedMetadata = {
+      ...(session_data.metadata || {}),
+      ...rtdbMetadata,
+    };
+    const metaDocRef = db
+      .collection("experiments")
+      .doc(experimentID)
+      .collection("session_metadata")
+      .doc(sessionId);
+    const metaPayload = {
+      sessionId,
+      state: finalState,
+      completedAt: new Date().toISOString(),
+      createdAt: session_data.createdAt || new Date().toISOString(),
+      metadata: combinedMetadata,
+    };
+    await metaDocRef.set(metaPayload);
+  } catch (metaErr) {
+    console.error("Error saving session_metadata:", metaErr);
+    // No lanzar error — la sesión ya fue finalizada correctamente
+  }
 
   return {
     success: true,
@@ -877,6 +911,33 @@ export const finalizeDisconnectedSessions = onValueWritten(
 
         return null;
       }
+
+      // Si la sesión ya está completada o abandonada (IndexedDB/Drive guardó los datos directamente)
+      if (state === "completed" || state === "abandoned") {
+        try {
+          await db
+            .collection("experiments")
+            .doc(experimentID)
+            .collection("session_metadata")
+            .doc(sessionId)
+            .set({
+              sessionId,
+              state,
+              completedAt: new Date().toISOString(),
+              metadata: afterData.metadata || {},
+              storageProvider: afterData.storageProvider || "googledrive",
+            });
+        } catch (metaErr) {
+          console.error("Error saving session_metadata:", metaErr);
+        }
+
+        await event.data.after.ref.update({
+          finalizationProcessed: true,
+          processedAt: Date.now(),
+        });
+
+        return null;
+      }
     }
 
     // CASO 3: Finalización normal
@@ -892,24 +953,7 @@ export const finalizeDisconnectedSessions = onValueWritten(
 
     const isAbandoned = afterData.state === "abandoned";
 
-    console.log(
-      `Processing session finalization: ${experimentID}/${sessionId}`,
-      `finished: ${
-        afterData.finished || false
-      }, disconnected: ${!afterData.connected}, state: ${
-        afterData.state || "unknown"
-      }`,
-    );
-
     try {
-      // Si fue abandonado, guardar estado en db.json local
-      if (isAbandoned && afterData.metadata) {
-        console.log(
-          `Session ${sessionId} marked as abandoned with metadata:`,
-          afterData.metadata,
-        );
-      }
-
       // Usar la función unificada que determina el storage provider automáticamente
       const result = await finalizeSession(experimentID, sessionId);
 
@@ -929,6 +973,31 @@ export const finalizeDisconnectedSessions = onValueWritten(
       // también marcar como procesado para evitar reintentos
       const isNoDataError =
         error.message === "SESSION_NOT_FOUND" || error.message === "NO_RESULTS";
+
+      // Si fue abandonado sin datos, guardar metadata de todas formas
+      if (isNoDataError && isAbandoned) {
+        try {
+          await db
+            .collection("experiments")
+            .doc(experimentID)
+            .collection("session_metadata")
+            .doc(sessionId)
+            .set({
+              sessionId,
+              state: "abandoned",
+              completedAt: new Date().toISOString(),
+              metadata: afterData.metadata || {},
+            });
+          console.log(
+            `Abandoned-no-data session ${sessionId} metadata saved to Firestore`,
+          );
+        } catch (metaErr) {
+          console.error(
+            "Error saving abandoned-no-data session metadata:",
+            metaErr,
+          );
+        }
+      }
 
       await event.data.after.ref.update({
         finalizationProcessed: true,

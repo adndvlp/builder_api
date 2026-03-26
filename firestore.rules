@@ -8,6 +8,11 @@ service cloud.firestore {
         (request.resource.data.uid == userId);
       allow delete: if(request.auth.uid == userId);
     }
+    match /experiments/{experimentId}/session_metadata/{sessionId} {
+      allow read: if request.auth.uid != null &&
+        get(/databases/$(database)/documents/experiments/$(experimentId)).data.owner == request.auth.uid;
+      allow write: if false;
+    }
     match /experiments/{experimentId} {
       function verifyFields(){
         return request.resource.data.keys().hasOnly(['active', 'id', 'owner', 'title', 'sessions', 'useValidation', 'allowJSON', 'allowCSV', 'requiredFields', 'maxSessions', 'limitSessions', 'activeConditionAssignment', 'nConditions', 'currentCondition', 'batchConfig', 'recruitmentConfig', 'captchaConfig'])
