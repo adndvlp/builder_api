@@ -11,6 +11,7 @@ import { githubOAuthCallback } from "./oauth/callbacks/github.js";
 import { googleDriveOAuthCallback } from "./oauth/callbacks/google-drive.js";
 import { osfOAuthCallback } from "./oauth/callbacks/osf.js";
 import { osfManage } from "./oauth/osf-token.js";
+import { uploadParticipantFile } from "./experiment/participant-files.js";
 import { setGlobalOptions } from "firebase-functions/v2";
 
 setGlobalOptions({
@@ -29,4 +30,5 @@ export {
   googleDriveOAuthCallback,
   osfManage,
   osfOAuthCallback,
+  uploadParticipantFile,
 };

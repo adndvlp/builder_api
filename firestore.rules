@@ -13,6 +13,11 @@ service cloud.firestore {
         get(/databases/$(database)/documents/experiments/$(experimentId)).data.owner == request.auth.uid;
       allow write: if false;
     }
+    match /experiments/{experimentId}/session_metadata/{sessionId}/participant_files/{fileId} {
+      allow read: if request.auth.uid != null &&
+        get(/databases/$(database)/documents/experiments/$(experimentId)).data.owner == request.auth.uid;
+      allow write: if false;
+    }
     match /experiments/{experimentId} {
       function verifyFields(){
         return request.resource.data.keys().hasOnly(['active', 'id', 'owner', 'title', 'sessions', 'useValidation', 'allowJSON', 'allowCSV', 'requiredFields', 'maxSessions', 'limitSessions', 'activeConditionAssignment', 'nConditions', 'currentCondition', 'batchConfig', 'recruitmentConfig', 'captchaConfig'])

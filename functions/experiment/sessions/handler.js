@@ -53,7 +53,7 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
   try {
     await writeLog(experimentID, "createSession");
 
-    const { batchSize } = req.body;
+    const { batchSize, sessionName } = req.body;
     console.log(
       `[CREATE SESSION] batchSize received: ${batchSize} (type: ${typeof batchSize})`,
     );
@@ -175,6 +175,23 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
       { sessions: FieldValue.increment(1) },
       { merge: true },
     );
+
+    // Write sessionName to session_metadata if provided
+    if (sessionName) {
+      try {
+        await db
+          .collection("experiments")
+          .doc(experimentID)
+          .collection("session_metadata")
+          .doc(sessionId)
+          .set(
+            { sessionId, sessionName, createdAt: new Date().toISOString() },
+            { merge: true },
+          );
+      } catch (metaErr) {
+        console.error("Error writing sessionName to session_metadata:", metaErr);
+      }
+    }
 
     res.status(201).json({
       success: true,

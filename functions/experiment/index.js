@@ -622,6 +622,8 @@ export const publishExperiment = onRequest({ cors: true }, async (req, res) => {
       }
 
       console.log("Repository created:", owner, "/", repoName);
+      // Wait for GitHub to finalize the initial commit before uploading files
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     } else {
       console.log("Repository already exists, updating...");
     }

@@ -86,6 +86,27 @@ export const apiData = onRequest({ cors: true }, async (req, res) => {
     return;
   }
 
+  // Update session name in session_metadata
+  if (action === "updateSessionName" && experimentID && sessionId) {
+    const { sessionName } = req.body;
+    if (!sessionName) {
+      res.status(400).json({ error: "sessionName is required" });
+      return;
+    }
+    try {
+      await db
+        .collection("experiments")
+        .doc(experimentID)
+        .collection("session_metadata")
+        .doc(sessionId)
+        .set({ sessionName }, { merge: true });
+      res.status(200).json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+    return;
+  }
+
   // Detectar si es creación de sesión (experimentID, sessionId, sin data ni filename)
   if (experimentID && sessionId && !data) {
     return await handleCreateSession(req, res, experimentID, sessionId);
