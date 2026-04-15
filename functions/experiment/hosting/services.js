@@ -49,7 +49,7 @@ export async function createRepositoryGithub(
   accessToken,
   repoName,
   isPrivate = false,
-  description = ""
+  description = "",
 ) {
   try {
     // Primero obtener el nombre de usuario
@@ -69,7 +69,7 @@ export async function createRepositoryGithub(
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/vnd.github.v3+json",
         },
-      }
+      },
     );
 
     if (checkResponse.ok) {
@@ -142,7 +142,7 @@ export async function uploadFileGithub(
   filePath,
   content,
   message = "Add file via API",
-  branch = "main"
+  branch = "main",
 ) {
   try {
     // Convertir el contenido a Base64
@@ -157,7 +157,7 @@ export async function uploadFileGithub(
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/vnd.github.v3+json",
         },
-      }
+      },
     );
 
     let sha = null;
@@ -182,7 +182,7 @@ export async function uploadFileGithub(
           branch: branch,
           ...(sha && { sha: sha }), // Incluir SHA solo si el archivo existe
         }),
-      }
+      },
     );
 
     const uploadResult = await uploadResponse.json();
@@ -223,7 +223,7 @@ export async function enableGithubPages(
   owner,
   repoName,
   branch = "main",
-  path = "/"
+  path = "/",
 ) {
   try {
     // Verificar si GitHub Pages ya está habilitado
@@ -235,7 +235,7 @@ export async function enableGithubPages(
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/vnd.github.v3+json",
         },
-      }
+      },
     );
 
     if (checkResponse.ok) {
@@ -263,7 +263,7 @@ export async function enableGithubPages(
             path: path,
           },
         }),
-      }
+      },
     );
 
     const enableResult = await enableResponse.json();
@@ -288,7 +288,7 @@ export async function enableGithubPages(
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/vnd.github.v3+json",
         },
-      }
+      },
     );
 
     if (pagesResponse.ok) {
@@ -331,7 +331,7 @@ export async function deleteRepositoryGithub(accessToken, owner, repoName) {
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/vnd.github.v3+json",
         },
-      }
+      },
     );
 
     if (!deleteResponse.ok && deleteResponse.status !== 204) {
@@ -372,7 +372,7 @@ export async function getRepositoryInfo(accessToken, owner, repoName) {
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/vnd.github.v3+json",
         },
-      }
+      },
     );
 
     const repoData = await response.json();

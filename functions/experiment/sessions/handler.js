@@ -189,7 +189,10 @@ async function handleCreateSession(req, res, experimentID, sessionId) {
             { merge: true },
           );
       } catch (metaErr) {
-        console.error("Error writing sessionName to session_metadata:", metaErr);
+        console.error(
+          "Error writing sessionName to session_metadata:",
+          metaErr,
+        );
       }
     }
 
