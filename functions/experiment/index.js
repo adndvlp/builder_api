@@ -242,14 +242,51 @@ export async function deleteExperiment(experimentID, uid, repoName = null) {
     }
   }
 
-  // Borrar subcolección session_metadata antes de borrar el documento padre
+  // Borrar subcolección session_metadata (y participant_files anidados) antes de borrar el documento padre
   const sessionMetaSnapshot = await experimentRef
     .collection("session_metadata")
     .get();
   if (!sessionMetaSnapshot.empty) {
-    const batch = db.batch();
-    sessionMetaSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
-    await batch.commit();
+    for (const sessionDoc of sessionMetaSnapshot.docs) {
+      // Borrar participant_files de cada sesión
+      const filesSnap = await sessionDoc.ref
+        .collection("participant_files")
+        .get();
+      if (!filesSnap.empty) {
+        const filesBatch = db.batch();
+        filesSnap.docs.forEach((d) => filesBatch.delete(d.ref));
+        await filesBatch.commit();
+      }
+      // Borrar trials subcollection de cada sesión (si existe)
+      const trialsSnap = await sessionDoc.ref.collection("trials").get();
+      if (!trialsSnap.empty) {
+        const trialsBatch = db.batch();
+        trialsSnap.docs.forEach((d) => trialsBatch.delete(d.ref));
+        await trialsBatch.commit();
+      }
+    }
+    // Borrar los documentos session_metadata en batch (máx 500 por batch)
+    const batchSize = 500;
+    for (let i = 0; i < sessionMetaSnapshot.docs.length; i += batchSize) {
+      const batch = db.batch();
+      sessionMetaSnapshot.docs
+        .slice(i, i + batchSize)
+        .forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+    }
+  }
+
+  // Borrar subcolección sessions (datos de Firestore de cada sesión)
+  const sessionsSnapshot = await experimentRef.collection("sessions").get();
+  if (!sessionsSnapshot.empty) {
+    const batchSize = 500;
+    for (let i = 0; i < sessionsSnapshot.docs.length; i += batchSize) {
+      const batch = db.batch();
+      sessionsSnapshot.docs
+        .slice(i, i + batchSize)
+        .forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+    }
   }
 
   await experimentRef.delete();
