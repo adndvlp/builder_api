@@ -124,6 +124,10 @@ dist
 .DS_Store
 *.pem
 
+# CodeGraph (local code knowledge graph DB)
+.codegraph/
+.codebase-memory
+
 # debug
 npm-debug.log*
 yarn-debug.log*

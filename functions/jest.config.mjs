@@ -1,0 +1,35 @@
+export default {
+  testEnvironment: "node",
+  testMatch: ["**/__tests__/**/*.test.js"],
+  transform: {},
+  moduleNameMapper: {
+    "^node-fetch$": "<rootDir>/__tests__/helpers/fetch-mock.js",
+  },
+  collectCoverageFrom: [
+    "experiment/**/*.js",
+    "oauth/**/*.js",
+    "utils/**/*.js",
+    "app.js",
+    "index.js",
+    "!experiment/index.js",
+    "!experiment/hosting/services.js",
+    "!experiment/sessions/handler.js",
+    "!experiment/sessions/index.js",
+    "!experiment/sessions/storage.js",
+    "!oauth/api/callbacks/osf.js",
+    "!oauth/index.js",
+    "!**/node_modules/**",
+    "!**/coverage/**",
+  ],
+  coverageThreshold: {
+    global: {
+      statements: 90,
+      branches: 80,
+      functions: 90,
+      lines: 90,
+    },
+  },
+  coverageDirectory: "coverage",
+  coverageReporters: ["text", "html", "lcov"],
+  verbose: true,
+};
